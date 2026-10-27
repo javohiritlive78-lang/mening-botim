@@ -30,10 +30,12 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from keepalive import start_keepalive
+
 # ================== SOZLAMALAR ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Token: BOT_TOKEN muhit o'zgaruvchisidan olinadi, bo'lmasa quyidagi qatorga YANGI tokenni yozing
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "8603889269:AAE2H-QM1kpz0uwi0KmLVwVZUumjCbNMjgQ"
+# Token faqat BOT_TOKEN muhit o'zgaruvchisidan olinadi (Render panelida kiritiladi)
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = 8327302562
 OTZIV_CHAT_ID = "@vip_starsgift"  # Buyurtmalar boradigan kanal username yoki IDsi
 # Baza doim bot.py yonida saqlanadi (qaysi papkadan ishga tushirilishidan qat'i nazar)
@@ -2735,11 +2737,13 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     if ":" not in BOT_TOKEN:
         raise SystemExit(
-            "❌ BOT_TOKEN to'g'ri emas! Faylning tepasida BOT_TOKEN = \"...\" qatoriga "
-            "@BotFather bergan haqiqiy (yangi) tokenni yozing (yoki BOT_TOKEN muhit o'zgaruvchisini o'rnating)."
+            "❌ BOT_TOKEN topilmadi! BOT_TOKEN muhit o'zgaruvchisiga "
+            "@BotFather bergan tokenni kiriting."
         )
     await init_db()
     logging.info("Baza fayli: %s", DB_PATH)
+    if start_keepalive():
+        logging.info("Health-check server ishga tushdi (PORT=%s)", os.getenv("PORT"))
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     sub_mw = SubMiddleware()

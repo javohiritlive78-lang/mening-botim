@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: stars-gift-bot
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.5"
+      - key: BOT_TOKEN
+        sync: false
+
+    # Bepul rejada doimiy disk yo'q: har restart/deployda bot.db o'chib ketadi.
+    # Ma'lumot saqlanishi shart bo'lsa (Starter, ~$7/oy):
+    # 1) plan: free -> plan: starter
+    # 2) shu servisga qo'shing:
+    #      disk:
+    #        name: data
+    #        mountPath: /var/data
+    #        sizeGB: 1
+    # 3) envVars ro'yxatiga qo'shing:
+    #      - key: DB_PATH
+    #        value: /var/data/bot.db
