@@ -10,4 +10,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping Render health endpoint
-        run: curl -fsS --max-time 30 https://stars-gift-bot.onrender.com/health
+        run: curl -fsS --max-time 120 https://stars-gift-bot.onrender.com/health
