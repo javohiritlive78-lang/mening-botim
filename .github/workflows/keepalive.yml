@@ -9,5 +9,9 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Render health endpoint
-        run: curl -fsS --max-time 120 https://stars-gift-bot.onrender.com/health
+      - name: Ping Render health endpoint (9x, every 30s)
+        run: |
+          for i in $(seq 1 9); do
+            curl -fsS --max-time 120 https://stars-gift-bot.onrender.com/health || true
+            sleep 30
+          done
