@@ -31,24 +31,32 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+import features
 from keepalive import start_keepalive
 
 # ================== SOZLAMALAR ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Token faqat BOT_TOKEN muhit o'zgaruvchisidan olinadi (Render panelida kiritiladi)
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-ADMIN_ID = 7676544759  # asosiy admin (texnik xabarlar shu yerga boradi)
-ADMIN_IDS = {7676544759, 5200398952}  # faqat shu 2 ta ID admin
+
+# 1) BOT TOKEN — ikki usuldan biri:
+#    a) Render panelida BOT_TOKEN muhit o'zgaruvchisi (xavfsiz, tavsiya etiladi)
+#    b) Pastdagi qo'shtirnoq ichiga to'g'ridan-to'g'ri yozish (faylni hech kimga yubormang!)
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip() or "BU_YERGA_BOT_TOKENNI_YOZING"
+
+# 2) ADMIN_ID — asosiy admin. Slot to'lovlari haqidagi xabarlar va texnik xabarlar shu yerga boradi.
+#    Slotdagi Telegram Stars botning Stars balansiga tushadi (bot egasi akkauntiga).
+ADMIN_ID = 7676544759
+ADMIN_IDS = {ADMIN_ID, 5200398952}  # faqat shu 2 ta ID admin
+
 OTZIV_CHAT_ID = "@vip_starsgift"  # Buyurtmalar boradigan kanal username yoki IDsi
 # Baza doim bot.py yonida saqlanadi (qaysi papkadan ishga tushirilishidan qat'i nazar)
 DB_PATH = os.getenv("DB_PATH") or os.path.join(BASE_DIR, "bot.db")
 
-REF_REWARD = 2  # Taklif qilingan do'st kanallarga obuna bo'lsa beriladigan stars
+REF_REWARD = 3  # Taklif qilingan do'st kanallarga obuna bo'lsa beriladigan stars
 RETURN_WINDOW = 72 * 3600  # chiqib ketgan do'st qaytishi uchun vaqt (72 soat)
 
 # ---- Slot (Open) sozlamalari ----
 SPIN_COST = 2  # bitta aylantirish narxi (Telegram hisobidan to'lanadigan stars)
-WIN_EVERY = 4  # har nechanchi aylantirishda 777 tushadi
+WIN_EVERY = 3  # har nechanchi aylantirishda 777 tushadi
 WIN_PRIZE = 5  # 777 tushganda botdagi balansga beriladigan stars
 
 # Stars paketlari: {stars_soni: narx (so'm)}  — narxlarni o'zingizga moslab o'zgartiring
@@ -118,8 +126,8 @@ T = {
         "ref_line": "{i}. 👤 {label} | 🆔 <code>{rid}</code>\n    Status: {status}",
         "ref_ok": "✅ obuna bo'lgan",
         "ref_wait": "⏳ obuna bo'lmagan",
-        "ref_left": "⚠️ chiqib ketgan (24 soatda qaytsa hisoblanadi)",
-        "ref_expired": "🚫 24 soatda qaytmagan (hisoblanmaydi)",
+        "ref_left": "⚠️ chiqib ketgan (72 soatda qaytsa hisoblanadi)",
+        "ref_expired": "🚫 72 soatda qaytmagan (hisoblanmaydi)",
         "ref_summary": "📊 <b>Natija:</b> ✅ {ok} ta obuna | ⏳ {wait} ta kutilmoqda | ⚠️ {left} ta chiqib ketgan",
         "ref_notify": (
             "🎉 Siz taklif qilgan <b>{name}</b> kanallarga obuna bo'ldi!\n"
@@ -230,8 +238,8 @@ T = {
         "ref_line": "{i}. 👤 {label} | 🆔 <code>{rid}</code>\n    Статус: {status}",
         "ref_ok": "✅ подписан",
         "ref_wait": "⏳ не подписан",
-        "ref_left": "⚠️ отписался (вернётся за 24 ч — засчитается)",
-        "ref_expired": "🚫 не вернулся за 24 часа (не учитывается)",
+        "ref_left": "⚠️ отписался (вернётся за 72 ч — засчитается)",
+        "ref_expired": "🚫 не вернулся за 72 часа (не учитывается)",
         "ref_summary": "📊 <b>Итог:</b> ✅ {ok} подписаны | ⏳ {wait} ожидают | ⚠️ {left} отписались",
         "ref_notify": (
             "🎉 Приглашённый вами <b>{name}</b> подписался на каналы!\n"
@@ -310,6 +318,7 @@ BTN = {
         "guide": "📚 Qo'llanma",
         "info": "ℹ️ Ma'lumot",
         "slot": "🎰 Open",
+        "daily": features.DAILY_BTN["uz"],
         "lang": "🌐 Til",
         "son": "📊 Son",
         "admin": "🛠 Admin panel",
@@ -327,6 +336,7 @@ BTN = {
         "guide": "📚 Инструкция",
         "info": "ℹ️ Информация",
         "slot": "🎰 Open",
+        "daily": features.DAILY_BTN["ru"],
         "lang": "🌐 Язык",
         "son": "📊 Количество",
         "admin": "🛠 Admin panel",
@@ -515,6 +525,7 @@ async def init_db():
                 [("@Luckasuzb", "📢 Luckasuzb"), ("@vip_starsgift", "📢 VIP Stars Gift")],
             )
         await db.commit()
+    await features.ensure_columns()
 
 
 async def safe_fetchone(sql: str, params: tuple = ()):
@@ -586,6 +597,7 @@ def main_kb(uid: int, lang: str) -> ReplyKeyboardMarkup:
         [b("promo"), b("top")],
         [b("support"), b("guide")],
         [b("slot"), b("son")],
+        [b("daily")],
         [b("info"), b("lang")],
     ]
     if uid in ADMIN_IDS:
@@ -645,7 +657,7 @@ async def try_reward_referrer(bot: Bot, uid: int, already_checked: bool = False)
         if rewarded == 1:
             return True
         if left_at is not None and now - left_at > RETURN_WINDOW:
-            return False  # 24 soatdan o'tib ketgan
+            return False  # muddat o'tib ketgan
         cur = await db.execute(
             "UPDATE users SET rewarded=1, left_at=NULL WHERE id=? AND rewarded=0", (uid,)
         )
@@ -663,11 +675,13 @@ async def try_reward_referrer(bot: Bot, uid: int, already_checked: bool = False)
         )
     except Exception:
         pass
+    # Referal bosqich bonuslari (5 / 10 / 25 / 50 do'st)
+    await features.check_milestones(bot, referrer_id)
     return True
 
 
 async def mark_left(uid: int):
-    """Do'st kanaldan chiqib ketdi: hisobdan chiqariladi, 24 soat ichida qaytsa yana qo'shiladi."""
+    """Do'st kanaldan chiqib ketdi: hisobdan chiqariladi, muddat ichida qaytsa yana qo'shiladi."""
     now = int(time.time())
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT referrer_id, ref_new FROM users WHERE id=? AND rewarded=1", (uid,))
@@ -1893,6 +1907,8 @@ async def admin_stats(c: CallbackQuery):
         gifts_done = await one("SELECT COUNT(*) FROM withdraws WHERE status='done'")
         promos = await one("SELECT COUNT(*) FROM promo_codes WHERE active=1")
         sched = await one("SELECT COUNT(*) FROM scheduled WHERE done=0")
+        slot_n = await one("SELECT COUNT(*) FROM star_payments")
+        slot_sum = await one("SELECT SUM(amount) FROM star_payments")
 
     await c.message.answer(
         "📊 <b>Statistika</b>\n\n"
@@ -1905,7 +1921,8 @@ async def admin_stats(c: CallbackQuery):
         f"⭐️ Foydalanuvchilar starsi: <b>{sum_stars:,}</b> ta\n\n"
         f"🛒 Stars xaridlari: <b>{orders_n}</b> ta — <b>{orders_sum:,}</b> so'm\n"
         f"💳 Tasdiqlangan to'ldirishlar: <b>{top_n}</b> ta — <b>{top_sum:,}</b> so'm\n"
-        f"🎁 Bajarilgan giftlar: <b>{gifts_done}</b> ta\n\n"
+        f"🎁 Bajarilgan giftlar: <b>{gifts_done}</b> ta\n"
+        f"🎰 Slot to'lovlari: <b>{slot_n}</b> ta — <b>{slot_sum:,}</b> ⭐️ (bot Stars balansiga tushgan)\n\n"
         f"⏳ Kutilayotgan cheklar: <b>{top_pending}</b>\n"
         f"⏳ Kutilayotgan giftlar: <b>{gifts_pending}</b>\n"
         f"🎟 Faol promokodlar: <b>{promos}</b>\n"
@@ -2660,8 +2677,9 @@ async def backup_loop(bot: Bot):
 
 # =====================================================================
 # 🎰 SLOT (OPEN) — har bir aylantirish FOYDALANUVCHINING TELEGRAM hisobidagi
-# Stars orqali to'lanadi (invoice). Botdagi stars balansi aylantirishga ishlatilmaydi,
-# u faqat yutuqlar va "Gift yechish" uchun.
+# Stars orqali to'lanadi (invoice). Bu Stars BOTNING Telegram Stars balansiga
+# tushadi (bot egasi akkauntida ko'rinadi). Botdagi stars balansi aylantirishga
+# ishlatilmaydi, u faqat yutuqlar va "Gift yechish" uchun.
 # =====================================================================
 SL = {
     "uz": {
@@ -2669,8 +2687,8 @@ SL = {
             "🎰 <b>SLOT — Open</b>\n\n"
             "┃ 🎰 ┃ 🎰 ┃ 🎰 ┃\n\n"
             "💵 Aylantirish narxi: <b>{cost} ⭐️</b> (Telegram hisobingizdan to'lanadi)\n"
-            "🏆 Har <b>omadingizda </b> 7️⃣7️⃣7️⃣ tushishi mumkin — yutuq: <b>{prize} ⭐️</b>\n"
-
+            "🏆 Har <b>{every}-aylantirishda</b> 7️⃣7️⃣7️⃣ tushadi — yutuq: <b>{prize} ⭐️</b>\n"
+            "🎯 Yutishgacha: <b>{left}</b> ta aylantirish\n\n"
             "⭐️ Botdagi balansingiz (yutuqlar): <b>{stars}</b> ta"
         ),
         "spin_btn": "🎰 Aylantirish ({cost} ⭐️)",
@@ -2678,7 +2696,7 @@ SL = {
         "inv_desc": "Telegram hisobingizdan {n} ⭐️ yechiladi va slot aylanadi",
         "paid_wait": "✅ To'lov qabul qilindi! Slot aylanmoqda...",
         "rolling": "🎰 <b>Aylanmoqda...</b>\n\n┃ {a} ┃ {b} ┃ {c} ┃",
-        "lose": "🎰 <b>Natija</b>\n\n┃ {a} ┃ {b} ┃ {c} ┃\n\n😔 Bu safar yutuq yo'q. Yana urinib ko'ring!\n🎯 Yutush uchun: omad kerak\n⭐️ Botdagi balans: <b>{stars}</b>",
+        "lose": "🎰 <b>Natija</b>\n\n┃ {a} ┃ {b} ┃ {c} ┃\n\n😔 Bu safar yutuq yo'q. Yana urinib ko'ring!\n🎯 Yutishgacha: <b>{left}</b> ta aylantirish\n⭐️ Botdagi balans: <b>{stars}</b>",
         "win": "🎰 <b>Natija</b>\n\n┃ 7️⃣ ┃ 7️⃣ ┃ 7️⃣ ┃\n\n🎉 <b>777! Siz yutdingiz — {prize} ⭐️!</b>\n⭐️ Botdagi balans: <b>{stars}</b>",
     },
     "ru": {
@@ -2686,7 +2704,7 @@ SL = {
             "🎰 <b>СЛОТ — Open</b>\n\n"
             "┃ 🎰 ┃ 🎰 ┃ 🎰 ┃\n\n"
             "💵 Цена вращения: <b>{cost} ⭐️</b> (оплата с вашего счёта Telegram)\n"
-            "🏆 Каждое <b>{every}-е вращение</b> гарантированно даёт 7️⃣7️⃣7️⃣ — выигрыш: <b>{prize} ⭐️</b>\n"
+            "🏆 Каждое <b>{every}-е вращение</b> даёт 7️⃣7️⃣7️⃣ — выигрыш: <b>{prize} ⭐️</b>\n"
             "🎯 До выигрыша: <b>{left}</b> вращ.\n\n"
             "⭐️ Баланс в боте (выигрыши): <b>{stars}</b>"
         ),
@@ -2713,6 +2731,12 @@ async def _slot_state(uid: int) -> tuple[int, int]:
     if not row:
         return 0, 0
     return row[0] or 0, row[1] or 0
+
+
+async def slot_totals() -> tuple[int, int]:
+    """Slot orqali botning Telegram Stars balansiga tushgan jami: (to'lovlar soni, jami ⭐️)."""
+    row = await safe_fetchone("SELECT COUNT(*), COALESCE(SUM(amount),0) FROM star_payments")
+    return (row[0], row[1]) if row else (0, 0)
 
 
 def _slot_kb(lang: str) -> InlineKeyboardMarkup:
@@ -2744,7 +2768,7 @@ async def slot_spin(c: CallbackQuery):
         title=sl(lang, "inv_title"),
         description=sl(lang, "inv_desc", n=SPIN_COST),
         payload=f"slot_spin:{u.id}:{int(time.time())}",
-        currency="XTR",  # Telegram Stars (foydalanuvchining o'z Telegram hisobi)
+        currency="XTR",  # Telegram Stars -> botning Stars balansiga tushadi
         prices=[LabeledPrice(label="1 spin", amount=SPIN_COST)],
     )
 
@@ -2818,15 +2842,36 @@ async def slot_paid(m: Message):
     except Exception:
         await m.answer(text, reply_markup=_slot_kb(lang))
 
-    # Adminlarga har bir to'lov haqida xabar
+    # Adminlarga har bir to'lov haqida xabar + botning Stars balansiga tushgan jami summa
     try:
+        n_pay, total_stars = await slot_totals()
         await notify_admins(
             m.bot,
             f"💳 <b>Slot to'lovi:</b> {html.escape(u.full_name)} (<code>{u.id}</code>) — "
-            f"<b>{sp.total_amount} ⭐️</b> (spin #{cnt})",
+            f"<b>{sp.total_amount} ⭐️</b> (spin #{cnt})\n"
+            f"🏦 Botning Stars balansiga slotdan jami tushgan: <b>{total_stars:,} ⭐️</b> ({n_pay} ta to'lov)",
         )
     except Exception:
         pass
+
+
+@router.message(Command("slotstars"))
+async def admin_slot_stars(m: Message):
+    """Admin: slotdan botning Telegram Stars balansiga jami qancha tushganini ko'rsatadi."""
+    if m.from_user.id not in ADMIN_IDS:
+        return
+    n_pay, total_stars = await slot_totals()
+    row = await safe_fetchone("SELECT COALESCE(SUM(spin_count),0) FROM users")
+    spins = row[0] if row else 0
+    wins = spins // WIN_EVERY
+    await m.answer(
+        "🎰 <b>Slot hisoboti</b>\n\n"
+        f"💳 To'lovlar: <b>{n_pay}</b> ta\n"
+        f"🏦 Botning Stars balansiga tushgan: <b>{total_stars:,} ⭐️</b>\n"
+        f"🏆 Taxminan berilgan yutuqlar (botdagi balansga): <b>{wins * WIN_PRIZE:,} ⭐️</b>\n\n"
+        "ℹ️ Haqiqiy balansni bot profilidan ko'ring: @BotFather emas, "
+        "<b>bot profili → ⋯ → Balans</b> (bot egasi akkauntida)."
+    )
 
 
 # ================== MAIN (ISHGA TUSHIRISH) ==================
@@ -2834,14 +2879,23 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     if ":" not in BOT_TOKEN:
         raise SystemExit(
-            "❌ BOT_TOKEN topilmadi! BOT_TOKEN muhit o'zgaruvchisiga "
-            "@BotFather bergan tokenni kiriting."
+            "❌ BOT_TOKEN topilmadi! BOT_TOKEN muhit o'zgaruvchisiga yoki fayl boshidagi "
+            "BOT_TOKEN qatoriga @BotFather bergan tokenni kiriting."
         )
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+
     sub_mw = SubMiddleware()
     router.message.middleware(sub_mw)
     router.callback_query.middleware(sub_mw)
+
+    # features.py: sozlash, anti-flood, kunlik bonus, admin buyruqlari
+    features.configure(DB_PATH, ADMIN_IDS, ADMIN_ID)
+    throttle = features.ThrottleMiddleware(0.6)
+    dp.message.outer_middleware(throttle)
+    dp.callback_query.outer_middleware(throttle)
+    features.router.message.middleware(sub_mw)
+    dp.include_router(features.router)  # router'dan OLDIN bo'lishi shart
     dp.include_router(router)
 
     # Server qayta ishga tushganda bazani Telegram'dagi zaxiradan tiklaymiz
@@ -2855,7 +2909,11 @@ async def main():
 
     await bot.delete_webhook(drop_pending_updates=True)
 
-    tasks = [asyncio.create_task(scheduler_loop(bot)), asyncio.create_task(backup_loop(bot))]
+    tasks = [
+        asyncio.create_task(scheduler_loop(bot)),
+        asyncio.create_task(backup_loop(bot)),
+        asyncio.create_task(features.daily_report_loop(bot)),
+    ]
     try:
         await dp.start_polling(bot)
     finally:
