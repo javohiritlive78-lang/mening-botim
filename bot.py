@@ -51,7 +51,7 @@ OTZIV_CHAT_ID = "@vip_starsgift"  # Buyurtmalar boradigan kanal username yoki ID
 # Baza doim bot.py yonida saqlanadi (qaysi papkadan ishga tushirilishidan qat'i nazar)
 DB_PATH = os.getenv("DB_PATH") or os.path.join(BASE_DIR, "bot.db")
 
-REF_REWARD = 3  # Taklif qilingan do'st kanallarga obuna bo'lsa beriladigan stars
+REF_REWARD = 2,5  # Taklif qilingan do'st kanallarga obuna bo'lsa beriladigan stars
 RETURN_WINDOW = 72 * 3600  # chiqib ketgan do'st qaytishi uchun vaqt (72 soat)
 
 # ---- Slot (Open) sozlamalari ----
