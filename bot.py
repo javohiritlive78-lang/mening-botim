@@ -62,7 +62,7 @@ WIN_PRIZE = 5  # 777 tushganda botdagi balansga beriladigan stars
 # Stars paketlari: {stars_soni: narx (so'm)}  — narxlarni o'zingizga moslab o'zgartiring
 PACKS = {50: 12000, 100: 21000, 200: 44000, 500: 110000}
 # Gift yechish uchun variantlar (stars)
-GIFTS = (15, 25)
+GIFTS = (15, 25,50,100)
 
 # Hisob to'ldirish uchun karta ma'lumoti (o'zingiznikini yozing)
 CARD_INFO = (
@@ -73,7 +73,7 @@ CARD_INFO = (
 TZ = timezone(timedelta(hours=5))  # Toshkent vaqti
 BACKUP_INTERVAL = 10 * 60  # Avtomatik zaxira oralig'i (soniya) — Telegram'ga saqlanadi
 
-CREATOR = "@N_57001"
+CREATOR = "@Javohir_Crown"
 CREATED_DATE = "20/10/2026"
 
 # ================== MATNLAR (UZ / RU) ==================
