@@ -28,7 +28,7 @@ ADMIN_ID = 0
 
 # ---------------- SOZLAMALAR (o'zingizga moslang) ----------------
 # Kunlik bonus: ketma-ket 1-kun, 2-kun, ... 7-kun uchun Stars (7-kundan keyin qaytadan boshlanadi)
-DAILY_REWARDS = [1, 1, 1, 2, 2, 2, 3]
+DAILY_REWARDS = [1, 2, 1, 1, 2, 1, 2]
 # Referal bosqichlari: {nechta faol do'st: beriladigan bonus Stars}
 MILESTONES = {5: 3, 10: 7, 25: 20, 50: 50}
 REPORT_HOUR = 21  # kunlik hisobot soati (Toshkent vaqti)
