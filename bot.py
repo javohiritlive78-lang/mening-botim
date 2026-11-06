@@ -40,7 +40,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 1) BOT TOKEN — ikki usuldan biri:
 #    a) Render panelida BOT_TOKEN muhit o'zgaruvchisi (xavfsiz, tavsiya etiladi)
 #    b) Pastdagi qo'shtirnoq ichiga to'g'ridan-to'g'ri yozish (faylni hech kimga yubormang!)
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8603889269:AAHZIDEwnDa2a8a7U7epdvdtczLiGdEO1ZI").strip() or ""
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8603889269:AAGr-b_iUTtqUdjVzLKvz-x-Vv6vc38PUXA").strip() or ""
 
 # 2) ADMIN_ID — asosiy admin. Slot to'lovlari haqidagi xabarlar va texnik xabarlar shu yerga boradi.
 #    Slotdagi Telegram Stars botning Stars balansiga tushadi (bot egasi akkauntiga).
