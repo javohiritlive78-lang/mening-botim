@@ -34,7 +34,41 @@ from aiogram.types import (
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Token: BOT_TOKEN muhit o'zgaruvchisidan olinadi. Bo'lmasa, quyidagi qatorga YANGI tokenni yozing.
 BOT_TOKEN = os.getenv("8603889269:AAGr-b_iUTtqUdjVzLKvz-x-Vv6vc38PUXA") or "8603889269:AAGr-b_iUTtqUdjVzLKvz-x-Vv6vc38PUXA"
-ADMIN_ID = 5200398952
+# IKKI ADMIN: bu yerga ikkala adminning Telegram raqamli ID sini yozing.
+ADMIN_ID_1 = 7676544759
+ADMIN_ID_2 = 5200398952  # Ikkinchi admin ID sini almashtiring
+ADMIN_IDS = (ADMIN_ID_1, ADMIN_ID_2)
+# Eski koddagi ADMIN_ID murojaatlari uchun moslik; ruxsat tekshiruvida ishlatilmaydi.
+ADMIN_ID = ADMIN_ID_1
+
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
+
+async def notify_admins(bot: Bot, text: str, **kwargs):
+    """Xabarni ikkala adminning shaxsiy chatiga yuboradi."""
+    sent = []
+    for admin_id in ADMIN_IDS:
+        try:
+            sent.append(await bot.send_message(admin_id, text, **kwargs))
+        except Exception as e:
+            logging.warning("Admin %s ga xabar yuborilmadi: %s", admin_id, e)
+    return sent
+
+
+async def notify_admins_file(bot: Bot, method: str, file_id: str, **kwargs):
+    """Rasm yoki hujjatni ikkala adminga yuboradi."""
+    sent = []
+    for admin_id in ADMIN_IDS:
+        try:
+            if method == "photo":
+                sent.append(await bot.send_photo(admin_id, file_id, **kwargs))
+            else:
+                sent.append(await bot.send_document(admin_id, file_id, **kwargs))
+        except Exception as e:
+            logging.warning("Admin %s ga fayl yuborilmadi: %s", admin_id, e)
+    return sent
 OTZIV_CHAT_ID = "@vip_starsgift"  # Buyurtmalar boradigan kanal username yoki IDsi
 # Baza doim bot.py yonida saqlanadi (qaysi papkadan ishga tushirilishidan qat'i nazar)
 DB_PATH = os.getenv("DB_PATH") or os.path.join(BASE_DIR, "bot.db")
@@ -448,7 +482,8 @@ async def init_db():
                 kind TEXT,
                 message_id INTEGER,
                 run_at INTEGER,
-                done INTEGER DEFAULT 0
+                done INTEGER DEFAULT 0,
+                source_chat_id INTEGER
             );
             CREATE TABLE IF NOT EXISTS star_payments(
                 charge_id TEXT PRIMARY KEY,
@@ -466,6 +501,7 @@ async def init_db():
         )
         # Baza avval yaratilgan bo'lsa, yangi ustunlarni qo'shib qo'yish
         for ddl in (
+            "ALTER TABLE scheduled ADD COLUMN source_chat_id INTEGER",
             "ALTER TABLE users ADD COLUMN stars INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'uz'",
             "ALTER TABLE users ADD COLUMN joined_at INTEGER",
@@ -570,7 +606,7 @@ def main_kb(uid: int, lang: str) -> ReplyKeyboardMarkup:
         [b("slot"), b("son")],
         [b("info"), b("lang")],
     ]
-    if uid == ADMIN_ID:
+    if is_admin(uid):
         rows.append([b("admin")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
@@ -689,7 +725,7 @@ class SubMiddleware(BaseMiddleware):
             msg = event.message
             if msg is None or msg.chat.type != "private":
                 return await handler(event, data)
-            if event.data == "check" or user.id == ADMIN_ID:
+            if event.data == "check" or is_admin(user.id):
                 return await handler(event, data)
             missing = await get_missing(event.bot, user.id)
             if not missing:
@@ -709,7 +745,7 @@ class SubMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         await add_user(user)
-        if user.id == ADMIN_ID:
+        if is_admin(user.id):
             return await handler(event, data)
 
         missing = await get_missing(event.bot, user.id)
@@ -726,7 +762,7 @@ async def start(m: Message, command: CommandObject, state: FSMContext):
     ref = int(command.args) if command.args and command.args.isdigit() else None
     await add_user(m.from_user, ref)
     lang = await get_lang(m.from_user.id)
-    missing = [] if m.from_user.id == ADMIN_ID else await get_missing(m.bot, m.from_user.id)
+    missing = [] if is_admin(m.from_user.id) else await get_missing(m.bot, m.from_user.id)
     if not missing:
         await m.answer(tr(lang, "welcome"), reply_markup=main_kb(m.from_user.id, lang))
         await record_joins(m.from_user.id)
@@ -927,7 +963,7 @@ async def menu(m: Message, state: FSMContext):
         await show_slot(m, uid, lang)
 
     elif key == "admin":
-        if uid != ADMIN_ID:
+        if not is_admin(uid):
             return await m.answer("❌ Siz admin emassiz!")
         await m.answer("🛠 <b>Admin panelga xush kelibsiz!</b>", reply_markup=admin_kb())
 
@@ -954,7 +990,7 @@ def admin_kb() -> InlineKeyboardMarkup:
 # ================== SON (KANALLAR STATISTIKASI) ==================
 async def record_joins(uid: int):
     """Foydalanuvchi hozir barcha kanalda a'zo ekanini bazaga yozib qo'yadi."""
-    if uid == ADMIN_ID:
+    if is_admin(uid):
         return
     now = int(time.time())
     chs = await get_channels()
@@ -1097,7 +1133,7 @@ async def process_buy_stars(c: CallbackQuery):
         logging.error("Xaridni kanalga yuborishda xatolik: %s", e)
 
     try:
-        await c.bot.send_message(ADMIN_ID, f"🔔 <b>Yangi xarid amalga oshirildi!</b>\n\n{order_text}")
+        await notify_admins(c.bot, f"🔔 <b>Yangi xarid amalga oshirildi!</b>\n\n{order_text}")
     except Exception as e:
         logging.error("Xaridni adminga yuborishda xatolik: %s", e)
 
@@ -1150,8 +1186,8 @@ async def process_withdraw(c: CallbackQuery):
         ]]
     )
     try:
-        await c.bot.send_message(
-            ADMIN_ID, f"🔔 <b>Yangi gift so'rovi tushdi!</b> (#{wid})\n\n{order_text}", reply_markup=admin_kb_gift
+        await notify_admins(
+            c.bot, f"🔔 <b>Yangi gift so'rovi tushdi!</b> (#{wid})\n\n{order_text}", reply_markup=admin_kb_gift
         )
     except Exception as e:
         logging.error("Gift so'rovini adminga yuborishda xatolik: %s", e)
@@ -1162,7 +1198,7 @@ async def process_withdraw(c: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^gift_(ok|no)_\d+$"))
 async def admin_gift_decide(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     _, action, wid = c.data.split("_")
     wid = int(wid)
@@ -1236,10 +1272,7 @@ async def receipt_received(m: Message, state: FSMContext):
         ]]
     )
     try:
-        if ftype == "photo":
-            await m.bot.send_photo(ADMIN_ID, file_id, caption=text, reply_markup=kb)
-        else:
-            await m.bot.send_document(ADMIN_ID, file_id, caption=text, reply_markup=kb)
+        await notify_admins_file(m.bot, ftype, file_id, caption=text, reply_markup=kb)
     except Exception as e:
         logging.warning("Chek adminga yuborilmadi: %s", e)
     await m.answer(tr(lang, "topup_sent"))
@@ -1253,7 +1286,7 @@ async def receipt_wrong(m: Message):
 
 @router.callback_query(F.data.regexp(r"^topup_(ok|no)_\d+$"))
 async def admin_topup_decide(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     _, action, tid = c.data.split("_")
     tid = int(tid)
@@ -1283,13 +1316,15 @@ async def admin_topup_decide(c: CallbackQuery, state: FSMContext):
         return await c.answer()
 
     await state.set_state(States.topup_amount)
-    await state.update_data(topup_id=tid, msg_id=c.message.message_id)
+    await state.update_data(topup_id=tid, msg_id=c.message.message_id, admin_chat_id=c.message.chat.id)
     await c.message.answer(f"💰 Chek #{tid}: hisobga qo'shiladigan <b>summani</b> yozing (so'mda):")
     await c.answer()
 
 
 @router.message(States.topup_amount, F.text)
 async def admin_topup_amount(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
     amount = parse_int(m.text)
     if not amount:
         return await m.answer("⚠️ Faqat summani raqam bilan yozing. Masalan: <code>21000</code>")
@@ -1316,7 +1351,7 @@ async def admin_topup_amount(m: Message, state: FSMContext):
         pass
     if msg_id:
         try:
-            await m.bot.edit_message_reply_markup(chat_id=ADMIN_ID, message_id=msg_id, reply_markup=None)
+            await m.bot.edit_message_reply_markup(chat_id=data.get("admin_chat_id", m.chat.id), message_id=msg_id, reply_markup=None)
         except Exception:
             pass
     await m.answer(f"✅ Chek #{tid} tasdiqlandi. <code>{user_id}</code> hisobiga <b>{amount} so'm</b> qo'shildi.")
@@ -1325,7 +1360,7 @@ async def admin_topup_amount(m: Message, state: FSMContext):
 # ================== ADMIN: BAN / UNBAN ==================
 @router.callback_query(F.data == "admin_ban_menu")
 async def admin_ban_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_ban)
     kb = InlineKeyboardMarkup(
@@ -1354,7 +1389,7 @@ async def confirm_ban_user(m: Message, state: FSMContext):
 
 @router.callback_query(F.data.regexp(r"^do_ban_\d+$"))
 async def execute_ban(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     target_id = int(c.data.replace("do_ban_", ""))
 
@@ -1373,7 +1408,7 @@ async def execute_ban(c: CallbackQuery):
 
 @router.callback_query(F.data == "unban_list")
 async def unban_list_menu(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -1396,7 +1431,7 @@ async def unban_list_menu(c: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^unban_\d+$"))
 async def execute_unban(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     target_id = int(c.data.replace("unban_", ""))
 
@@ -1416,7 +1451,7 @@ async def execute_unban(c: CallbackQuery):
 # ================== ADMIN: PUL QO'SHISH ==================
 @router.callback_query(F.data == "admin_topup_menu")
 async def admin_topup_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_topup)
     await c.message.answer(
@@ -1459,7 +1494,7 @@ async def process_topup(m: Message, state: FSMContext):
 # ================== ADMIN: PUL AYIRISH ==================
 @router.callback_query(F.data == "admin_minus_menu")
 async def admin_minus_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_minus)
     await c.message.answer(
@@ -1507,7 +1542,7 @@ async def process_minus_balance(m: Message, state: FSMContext):
 # ================== ADMIN: STARS QO'SHISH ==================
 @router.callback_query(F.data == "admin_st_plus_menu")
 async def admin_st_plus_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_st_plus)
     await c.message.answer(
@@ -1555,7 +1590,7 @@ async def process_st_plus(m: Message, state: FSMContext):
 # ================== ADMIN: STARS AYIRISH ==================
 @router.callback_query(F.data == "admin_st_minus_menu")
 async def admin_st_minus_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_st_minus)
     await c.message.answer(
@@ -1604,7 +1639,7 @@ async def process_st_minus(m: Message, state: FSMContext):
 # ================== ADMIN: KANAL QO'SHISH/O'CHIRISH ==================
 @router.callback_query(F.data == "add_ch")
 async def admin_add_channel(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_channel)
     await c.message.answer(
@@ -1641,7 +1676,7 @@ async def save_new_channel(m: Message, state: FSMContext):
 
 @router.callback_query(F.data == "del_ch_menu")
 async def delete_channel_menu(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     channels = await get_channels()
     if not channels:
@@ -1657,7 +1692,7 @@ async def delete_channel_menu(c: CallbackQuery):
 
 @router.callback_query(F.data.startswith("delch_"))
 async def remove_channel(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     ch_username = c.data.replace("delch_", "", 1)
 
@@ -1683,8 +1718,8 @@ async def support_msg(m: Message, state: FSMContext):
         ]]
     )
     try:
-        await m.bot.send_message(
-            ADMIN_ID,
+        await notify_admins(
+            m.bot,
             "☎️ <b>Yangi murojaat</b>\n\n"
             f"👤 {html.escape(u.full_name)}\n🔗 Username: {uname}\n🆔 <code>{u.id}</code>\n\n"
             f"💬 {html.escape(m.text)}",
@@ -1697,7 +1732,7 @@ async def support_msg(m: Message, state: FSMContext):
 
 @router.callback_query(F.data.regexp(r"^reply_\d+_\d+$"))
 async def admin_reply_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     _, uid, mid = c.data.split("_")
     await state.set_state(States.waiting_reply)
@@ -1711,6 +1746,8 @@ async def admin_reply_start(c: CallbackQuery, state: FSMContext):
 
 @router.message(States.waiting_reply, F.text)
 async def admin_reply_send(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
     data = await state.get_data()
     target_id = data["target_id"]
     target_msg_id = data["target_msg_id"]
@@ -1739,7 +1776,7 @@ async def cancel_admin(c: CallbackQuery, state: FSMContext):
 # ================== ADMIN: FOYDALANUVCHILAR ==================
 @router.callback_query(F.data == "users")
 async def users_list(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
@@ -1789,7 +1826,7 @@ async def send_packed(message: Message, lines: list[str], limit: int = 3800):
 
 @router.callback_query(F.data == "admin_refs")
 async def admin_refs(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
@@ -1842,7 +1879,7 @@ async def admin_refs(c: CallbackQuery):
 # ================== ADMIN: STATISTIKA ==================
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await c.answer()
     today = int(datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
@@ -1894,7 +1931,7 @@ async def admin_stats(c: CallbackQuery):
 # ================== ADMIN: FOYDALANUVCHINI QIDIRISH ==================
 @router.callback_query(F.data == "admin_find")
 async def admin_find_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_find)
     await c.message.answer(
@@ -1958,7 +1995,7 @@ async def admin_find_result(m: Message, state: FSMContext):
 # ================== ADMIN: PROMOKODLAR ==================
 @router.callback_query(F.data == "admin_promo_menu")
 async def admin_promo_menu(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1972,7 +2009,7 @@ async def admin_promo_menu(c: CallbackQuery):
 
 @router.callback_query(F.data.in_({"pnew_stars", "pnew_balance"}))
 async def promo_new_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     kind = c.data.replace("pnew_", "")
     await state.set_state(States.promo_new)
@@ -2043,7 +2080,7 @@ async def promo_new_save(m: Message, state: FSMContext):
 
 @router.callback_query(F.data == "promo_list")
 async def promo_list(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
@@ -2067,7 +2104,7 @@ async def promo_list(c: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^pdel_\d+$"))
 async def promo_delete(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     rid = int(c.data.replace("pdel_", ""))
     async with aiosqlite.connect(DB_PATH) as db:
@@ -2115,7 +2152,7 @@ def report_text(res: dict, title: str = "✅ <b>Reklama tarqatildi!</b>") -> str
     )
 
 
-async def send_to_users(bot: Bot, msg_id: int, progress=None) -> dict:
+async def send_to_users(bot: Bot, msg_id: int, source_chat_id: int, progress=None) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT id FROM users WHERE is_banned=0")
         ids = [r[0] for r in await cur.fetchall()]
@@ -2124,7 +2161,7 @@ async def send_to_users(bot: Bot, msg_id: int, progress=None) -> dict:
     ok_ids, blocked_ids = [], []
     last = time.time()
     for n, uid in enumerate(ids, 1):
-        st = await _copy_with_retry(bot, uid, ADMIN_ID, msg_id)
+        st = await _copy_with_retry(bot, uid, source_chat_id, msg_id)
         if st == "ok":
             res["ok"] += 1
             ok_ids.append(uid)
@@ -2148,10 +2185,10 @@ async def send_to_users(bot: Bot, msg_id: int, progress=None) -> dict:
     return res
 
 
-async def send_to_channels(bot: Bot, msg_id: int) -> tuple[list[str], list[str]]:
+async def send_to_channels(bot: Bot, msg_id: int, source_chat_id: int) -> tuple[list[str], list[str]]:
     ok_list, fail_list = [], []
     for ch, _ in await get_channels():
-        if await _copy_with_retry(bot, ch, ADMIN_ID, msg_id) == "ok":
+        if await _copy_with_retry(bot, ch, source_chat_id, msg_id) == "ok":
             ok_list.append(ch)
         else:
             fail_list.append(ch)
@@ -2176,7 +2213,7 @@ async def on_my_chat_member(ev: ChatMemberUpdated):
 # ================== ADMIN: REKLAMA TARQATISH ==================
 @router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_broadcast)
     await c.message.answer(
@@ -2190,6 +2227,8 @@ async def admin_broadcast_start(c: CallbackQuery, state: FSMContext):
 
 @router.message(States.waiting_broadcast)
 async def broadcast_preview(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
     await state.clear()
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT COUNT(*) FROM users WHERE is_banned=0")
@@ -2226,7 +2265,7 @@ async def run_broadcast(bot: Bot, msg: Message, msg_id: int):
             pass
 
     try:
-        res = await send_to_users(bot, msg_id, progress)
+        res = await send_to_users(bot, msg_id, msg.chat.id, progress)
         text = report_text(res)
     except Exception as e:
         logging.error("Reklama xato: %s", e)
@@ -2237,12 +2276,12 @@ async def run_broadcast(bot: Bot, msg: Message, msg_id: int):
     try:
         await msg.edit_text(text)
     except Exception:
-        await bot.send_message(ADMIN_ID, text)
+        await bot.send_message(msg.chat.id, text)
 
 
 @router.callback_query(F.data.regexp(r"^bc_yes_\d+$"))
 async def broadcast_send(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     if BROADCAST_RUNNING:
         return await c.answer("⏳ Oldingi reklama hali yuborilmoqda, kuting.", show_alert=True)
@@ -2271,7 +2310,7 @@ def ad_channels_kb(channels: list[tuple[str, str]], selected: list[str]) -> Inli
 
 @router.callback_query(F.data == "admin_ad_menu")
 async def admin_ad_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     channels = await get_channels()
     if not channels:
@@ -2289,7 +2328,7 @@ async def admin_ad_menu(c: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("adch_"))
 async def admin_ad_pick(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     username = c.data.replace("adch_", "", 1)
     data = await state.get_data()
@@ -2316,7 +2355,7 @@ async def admin_ad_pick(c: CallbackQuery, state: FSMContext):
 
 @router.message(Command("ad"))
 async def admin_ad_next(m: Message, command: CommandObject, state: FSMContext):
-    if m.from_user.id != ADMIN_ID:
+    if not is_admin(m.from_user.id):
         return
     if (command.args or "").strip().lower() != "next":
         return await m.answer("⚠️ To'g'ri buyruq: <code>/ad next</code>")
@@ -2337,7 +2376,7 @@ async def admin_ad_next(m: Message, command: CommandObject, state: FSMContext):
 
 @router.message(States.ad_text)
 async def admin_ad_send(m: Message, state: FSMContext):
-    if m.from_user.id != ADMIN_ID:
+    if not is_admin(m.from_user.id):
         return
     data = await state.get_data()
     selected: list[str] = data.get("ad_sel", [])
@@ -2377,7 +2416,7 @@ def parse_when(text: str) -> int | None:
 
 @router.callback_query(F.data == "admin_sched_menu")
 async def admin_sched_menu(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -2392,7 +2431,7 @@ async def admin_sched_menu(c: CallbackQuery):
 
 @router.callback_query(F.data.in_({"sched_new_users", "sched_new_channels"}))
 async def sched_new_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     kind = c.data.replace("sched_new_", "")
     await state.set_state(States.sched_msg)
@@ -2406,7 +2445,9 @@ async def sched_new_start(c: CallbackQuery, state: FSMContext):
 
 @router.message(States.sched_msg)
 async def sched_got_msg(m: Message, state: FSMContext):
-    await state.update_data(mid=m.message_id)
+    if not is_admin(m.from_user.id):
+        return
+    await state.update_data(mid=m.message_id, source_chat_id=m.chat.id)
     await state.set_state(States.sched_time)
     now = datetime.now(TZ).strftime("%d.%m %H:%M")
     await m.answer(
@@ -2418,6 +2459,8 @@ async def sched_got_msg(m: Message, state: FSMContext):
 
 @router.message(States.sched_time, F.text)
 async def sched_got_time(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
     ts = parse_when(m.text)
     if ts is None:
         return await m.answer("⚠️ Xato format! Masalan: <code>25.10 18:30</code>")
@@ -2428,8 +2471,8 @@ async def sched_got_time(m: Message, state: FSMContext):
     await state.clear()
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "INSERT INTO scheduled(kind, message_id, run_at) VALUES(?,?,?)",
-            (data["kind"], data["mid"], ts),
+            "INSERT INTO scheduled(kind, message_id, run_at, source_chat_id) VALUES(?,?,?,?)",
+            (data["kind"], data["mid"], ts, data.get("source_chat_id", m.chat.id)),
         )
         sid = cur.lastrowid
         await db.commit()
@@ -2439,7 +2482,7 @@ async def sched_got_time(m: Message, state: FSMContext):
 
 @router.callback_query(F.data == "sched_list")
 async def sched_list(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT id, kind, run_at FROM scheduled WHERE done=0 ORDER BY run_at")
@@ -2461,7 +2504,7 @@ async def sched_list(c: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^sched_del_\d+$"))
 async def sched_delete(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     sid = int(c.data.replace("sched_del_", ""))
     async with aiosqlite.connect(DB_PATH) as db:
@@ -2476,23 +2519,23 @@ async def scheduler_loop(bot: Bot):
             now = int(time.time())
             async with aiosqlite.connect(DB_PATH) as db:
                 cur = await db.execute(
-                    "SELECT id, kind, message_id FROM scheduled WHERE done=0 AND run_at<=?", (now,)
+                    "SELECT id, kind, message_id, COALESCE(source_chat_id, ?) FROM scheduled WHERE done=0 AND run_at<=?", (ADMIN_ID_1, now)
                 )
                 due = await cur.fetchall()
-            for sid, kind, mid in due:
+            for sid, kind, mid, source_chat_id in due:
                 async with aiosqlite.connect(DB_PATH) as db:
                     cur = await db.execute("UPDATE scheduled SET done=1 WHERE id=? AND done=0", (sid,))
                     await db.commit()
                     if cur.rowcount == 0:
                         continue
                 if kind == "users":
-                    res = await send_to_users(bot, mid)
+                    res = await send_to_users(bot, mid, source_chat_id)
                     report = report_text(res, "📊 <b>Natija:</b>")
                 else:
-                    ok_l, fail_l = await send_to_channels(bot, mid)
+                    ok_l, fail_l = await send_to_channels(bot, mid, source_chat_id)
                     report = f"📬 Yuborildi: <b>{len(ok_l)}</b> ta kanal\n🚫 Yuborilmadi: <b>{len(fail_l)}</b> ta kanal"
                 try:
-                    await bot.send_message(ADMIN_ID, f"⏰ <b>Rejalashtirilgan xabar yuborildi!</b> (#{sid})\n\n{report}")
+                    await notify_admins(bot, f"⏰ <b>Rejalashtirilgan xabar yuborildi!</b> (#{sid})\n\n{report}")
                 except Exception:
                     pass
         except Exception as e:
@@ -2521,7 +2564,11 @@ async def send_backup(bot: Bot, caption: str = "💾 Baza zaxirasi"):
     path = os.path.join(tempfile.gettempdir(), name)
     await asyncio.to_thread(_backup_sync, path)
     try:
-        await bot.send_document(ADMIN_ID, FSInputFile(path, filename=name), caption=caption)
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_document(admin_id, FSInputFile(path, filename=name), caption=caption)
+            except Exception as e:
+                logging.warning("Backup %s ga yuborilmadi: %s", admin_id, e)
     finally:
         try:
             os.remove(path)
@@ -2531,7 +2578,7 @@ async def send_backup(bot: Bot, caption: str = "💾 Baza zaxirasi"):
 
 @router.callback_query(F.data == "admin_backup")
 async def admin_backup(c: CallbackQuery):
-    if c.from_user.id != ADMIN_ID:
+    if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await c.answer("⏳ Zaxira tayyorlanmoqda...")
     try:
@@ -2689,8 +2736,8 @@ async def slot_paid(m: Message):
         text = sl(lang, "win", prize=WIN_PRIZE, stars=stars)
         try:
             uname = f"@{u.username}" if u.username else "yo'q"
-            await m.bot.send_message(
-                ADMIN_ID,
+            await notify_admins(
+                m.bot,
                 f"🎰 <b>Bu odam 777 tushirdi!</b>\n\n👤 {html.escape(u.full_name)} ({uname})\n"
                 f"🆔 <code>{u.id}</code>\n🏆 Yutuq: <b>{WIN_PRIZE} ⭐️</b> (aylantirish #{cnt})",
             )
@@ -2711,8 +2758,8 @@ async def slot_paid(m: Message):
 
     # Adminga har bir to'lov haqida xabar
     try:
-        await m.bot.send_message(
-            ADMIN_ID,
+        await notify_admins(
+            m.bot,
             f"💳 <b>Slot to'lovi:</b> {html.escape(u.full_name)} (<code>{u.id}</code>) — "
             f"<b>{sp.total_amount} ⭐️</b> (spin #{cnt})",
         )
