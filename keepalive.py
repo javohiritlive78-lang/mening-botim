@@ -4,7 +4,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DEFAULT_PORT = 10000
-
+ 
 
 class _Handler(BaseHTTPRequestHandler):
     def _ok(self):
