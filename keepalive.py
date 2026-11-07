@@ -1,14 +1,9 @@
-"""Render free web service uchun health-check server.
-
-Render servisga tashqi trafik kelmasa uni uyquga yuboradi. UptimeRobot yoki
-cron-job.org kabi xizmat /health manzilini muntazam chaqirib turishi kerak.
-PORT muhit o'zgaruvchisi bo'lmasa (lokal ishga tushirish) server ko'tarilmaydi.
-"""
-
 import logging
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+DEFAULT_PORT = 10000
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -40,10 +35,18 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def start_keepalive() -> bool:
-    port = os.getenv("PORT")
-    if not port:
+    raw = os.getenv("PORT") or str(DEFAULT_PORT)
+    try:
+        port = int(raw)
+    except ValueError:
+        port = DEFAULT_PORT
+
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", port), _Handler)
+    except OSError as e:
+        logging.error("Health-check port %s ochilmadi: %s", port, e)
         return False
-    server = ThreadingHTTPServer(("0.0.0.0", int(port)), _Handler)
+
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    logging.info("Health-check: http://0.0.0.0:%s/health", port)
+    logging.warning("Health-check: http://0.0.0.0:%s/health", port)
     return True
