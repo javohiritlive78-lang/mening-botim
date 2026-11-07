@@ -33,7 +33,7 @@ from aiogram.types import (
 # ================== SOZLAMALAR ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Token: BOT_TOKEN muhit o'zgaruvchisidan olinadi. Bo'lmasa, quyidagi qatorga YANGI tokenni yozing.
-BOT_TOKEN = os.getenv("8603889269:AAGr-b_iUTtqUdjVzLKvz-x-Vv6vc38PUXA") or "8603889269:AAGr-b_iUTtqUdjVzLKvz-x-Vv6vc38PUXA"
+BOT_TOKEN = os.getenv("8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM") or "8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM"
 # IKKI ADMIN: bu yerga ikkala adminning Telegram raqamli ID sini yozing.
 ADMIN_ID_1 = 7676544759
 ADMIN_ID_2 = 5200398952  # Ikkinchi admin ID sini almashtiring
