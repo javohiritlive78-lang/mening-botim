@@ -4,7 +4,6 @@ import logging
 import os
 import random
 import re
-import shutil
 import sqlite3
 import tempfile
 import time
@@ -31,49 +30,38 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-import features
-from keepalive import start_keepalive
-
 # ================== SOZLAMALAR ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# 1) BOT TOKEN — ikki usuldan biri:
-#    a) Render panelida BOT_TOKEN muhit o'zgaruvchisi (xavfsiz, tavsiya etiladi)
-#    b) Pastdagi qo'shtirnoq ichiga to'g'ridan-to'g'ri yozish (faylni hech kimga yubormang!)
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8603889269:AAGr-b_iUTtqUdjVzLKvz-x-Vv6vc38PUXA").strip() or ""
-
-# 2) ADMIN_ID — asosiy admin. Slot to'lovlari haqidagi xabarlar va texnik xabarlar shu yerga boradi.
-#    Slotdagi Telegram Stars botning Stars balansiga tushadi (bot egasi akkauntiga).
-ADMIN_ID = 7676544759
-ADMIN_IDS = {ADMIN_ID, 5200398952}  # faqat shu 2 ta ID admin
-
+# Token: BOT_TOKEN muhit o'zgaruvchisidan olinadi. Bo'lmasa, quyidagi qatorga YANGI tokenni yozing.
+BOT_TOKEN = os.getenv("BOT_TOKEN") or "YANGI_TOKENNI_SHU_YERGA_YOZING"
+ADMIN_ID = 8327302562
 OTZIV_CHAT_ID = "@vip_starsgift"  # Buyurtmalar boradigan kanal username yoki IDsi
 # Baza doim bot.py yonida saqlanadi (qaysi papkadan ishga tushirilishidan qat'i nazar)
 DB_PATH = os.getenv("DB_PATH") or os.path.join(BASE_DIR, "bot.db")
 
-REF_REWARD = 2,5  # Taklif qilingan do'st kanallarga obuna bo'lsa beriladigan stars
+REF_REWARD = 2  # Taklif qilingan do'st kanallarga obuna bo'lsa beriladigan stars
 RETURN_WINDOW = 72 * 3600  # chiqib ketgan do'st qaytishi uchun vaqt (72 soat)
 
 # ---- Slot (Open) sozlamalari ----
 SPIN_COST = 2  # bitta aylantirish narxi (Telegram hisobidan to'lanadigan stars)
-WIN_EVERY = 3  # har nechanchi aylantirishda 777 tushadi
+WIN_EVERY = 4  # har nechanchi aylantirishda 777 tushadi
 WIN_PRIZE = 5  # 777 tushganda botdagi balansga beriladigan stars
 
 # Stars paketlari: {stars_soni: narx (so'm)}  — narxlarni o'zingizga moslab o'zgartiring
-PACKS = {50: 12000, 100: 21000, 200: 44000, 500: 110000}
+PACKS = {50: 11000, 100: 21000, 200: 44000, 500: 110000}
 # Gift yechish uchun variantlar (stars)
-GIFTS = (15, 25,50,100)
+GIFTS = (15, 25)
 
 # Hisob to'ldirish uchun karta ma'lumoti (o'zingiznikini yozing)
 CARD_INFO = (
-    "💳 Karta raqami: <code>9860 1201 6397 2181</code>\n"
-    "👤 Karta egasi: <b>N E</b>"
+    "💳 Karta raqami: <code>0000 0000 0000 0000</code>\n"
+    "👤 Karta egasi: <b>Ism Familiya</b>"
 )
 
 TZ = timezone(timedelta(hours=5))  # Toshkent vaqti
-BACKUP_INTERVAL = 10 * 60  # Avtomatik zaxira oralig'i (soniya) — Telegram'ga saqlanadi
+BACKUP_INTERVAL = 24 * 3600  # Avtomatik zaxira oralig'i (soniya)
 
-CREATOR = "@Javohir_Crown"
+CREATOR = "@N_57001"
 CREATED_DATE = "20/10/2026"
 
 # ================== MATNLAR (UZ / RU) ==================
@@ -126,8 +114,8 @@ T = {
         "ref_line": "{i}. 👤 {label} | 🆔 <code>{rid}</code>\n    Status: {status}",
         "ref_ok": "✅ obuna bo'lgan",
         "ref_wait": "⏳ obuna bo'lmagan",
-        "ref_left": "⚠️ chiqib ketgan (72 soatda qaytsa hisoblanadi)",
-        "ref_expired": "🚫 72 soatda qaytmagan (hisoblanmaydi)",
+        "ref_left": "⚠️ chiqib ketgan (24 soatda qaytsa hisoblanadi)",
+        "ref_expired": "🚫 24 soatda qaytmagan (hisoblanmaydi)",
         "ref_summary": "📊 <b>Natija:</b> ✅ {ok} ta obuna | ⏳ {wait} ta kutilmoqda | ⚠️ {left} ta chiqib ketgan",
         "ref_notify": (
             "🎉 Siz taklif qilgan <b>{name}</b> kanallarga obuna bo'ldi!\n"
@@ -238,8 +226,8 @@ T = {
         "ref_line": "{i}. 👤 {label} | 🆔 <code>{rid}</code>\n    Статус: {status}",
         "ref_ok": "✅ подписан",
         "ref_wait": "⏳ не подписан",
-        "ref_left": "⚠️ отписался (вернётся за 72 ч — засчитается)",
-        "ref_expired": "🚫 не вернулся за 72 часа (не учитывается)",
+        "ref_left": "⚠️ отписался (вернётся за 24 ч — засчитается)",
+        "ref_expired": "🚫 не вернулся за 24 часа (не учитывается)",
         "ref_summary": "📊 <b>Итог:</b> ✅ {ok} подписаны | ⏳ {wait} ожидают | ⚠️ {left} отписались",
         "ref_notify": (
             "🎉 Приглашённый вами <b>{name}</b> подписался на каналы!\n"
@@ -318,7 +306,6 @@ BTN = {
         "guide": "📚 Qo'llanma",
         "info": "ℹ️ Ma'lumot",
         "slot": "🎰 Open",
-        "daily": features.DAILY_BTN["uz"],
         "lang": "🌐 Til",
         "son": "📊 Son",
         "admin": "🛠 Admin panel",
@@ -336,7 +323,6 @@ BTN = {
         "guide": "📚 Инструкция",
         "info": "ℹ️ Информация",
         "slot": "🎰 Open",
-        "daily": features.DAILY_BTN["ru"],
         "lang": "🌐 Язык",
         "son": "📊 Количество",
         "admin": "🛠 Admin panel",
@@ -399,20 +385,6 @@ def fmt_ts(ts: int) -> str:
 async def send_chunks(message: Message, lines: list[str], per_chunk: int = 20, sep: str = "\n\n"):
     for i in range(0, len(lines), per_chunk):
         await message.answer(sep.join(lines[i:i + per_chunk]))
-
-
-async def notify_admins(bot: Bot, text: str, **kwargs):
-    for admin in ADMIN_IDS:
-        try:
-            await bot.send_message(admin, text, **kwargs)
-        except Exception as e:
-            logging.warning("Adminga xabar yuborilmadi (%s): %s", admin, e)
-
-
-def topup_kb(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=tr(lang, "topup_btn"), callback_data="send_receipt")]]
-    )
 
 
 # ================== BAZA ==================
@@ -525,7 +497,6 @@ async def init_db():
                 [("@Luckasuzb", "📢 Luckasuzb"), ("@vip_starsgift", "📢 VIP Stars Gift")],
             )
         await db.commit()
-    await features.ensure_columns()
 
 
 async def safe_fetchone(sql: str, params: tuple = ()):
@@ -597,10 +568,9 @@ def main_kb(uid: int, lang: str) -> ReplyKeyboardMarkup:
         [b("promo"), b("top")],
         [b("support"), b("guide")],
         [b("slot"), b("son")],
-        [b("daily")],
         [b("info"), b("lang")],
     ]
-    if uid in ADMIN_IDS:
+    if uid == ADMIN_ID:
         rows.append([b("admin")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
@@ -675,8 +645,6 @@ async def try_reward_referrer(bot: Bot, uid: int, already_checked: bool = False)
         )
     except Exception:
         pass
-    # Referal bosqich bonuslari (5 / 10 / 25 / 50 do'st)
-    await features.check_milestones(bot, referrer_id)
     return True
 
 
@@ -721,7 +689,7 @@ class SubMiddleware(BaseMiddleware):
             msg = event.message
             if msg is None or msg.chat.type != "private":
                 return await handler(event, data)
-            if event.data == "check" or user.id in ADMIN_IDS:
+            if event.data == "check" or user.id == ADMIN_ID:
                 return await handler(event, data)
             missing = await get_missing(event.bot, user.id)
             if not missing:
@@ -741,7 +709,7 @@ class SubMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         await add_user(user)
-        if user.id in ADMIN_IDS:
+        if user.id == ADMIN_ID:
             return await handler(event, data)
 
         missing = await get_missing(event.bot, user.id)
@@ -758,7 +726,7 @@ async def start(m: Message, command: CommandObject, state: FSMContext):
     ref = int(command.args) if command.args and command.args.isdigit() else None
     await add_user(m.from_user, ref)
     lang = await get_lang(m.from_user.id)
-    missing = [] if m.from_user.id in ADMIN_IDS else await get_missing(m.bot, m.from_user.id)
+    missing = [] if m.from_user.id == ADMIN_ID else await get_missing(m.bot, m.from_user.id)
     if not missing:
         await m.answer(tr(lang, "welcome"), reply_markup=main_kb(m.from_user.id, lang))
         await record_joins(m.from_user.id)
@@ -880,7 +848,7 @@ async def menu(m: Message, state: FSMContext):
             ]
         )
         lines = "\n".join(tr(lang, "pack_line", n=n, price=f"{p:,}") for n, p in PACKS.items())
-        await m.answer(tr(lang, "stars_menu", lines=lines) + "\n\n" + CARD_INFO, reply_markup=kb)
+        await m.answer(tr(lang, "stars_menu", lines=lines), reply_markup=kb)
 
     elif key == "withdraw":
         kb = InlineKeyboardMarkup(
@@ -918,16 +886,16 @@ async def menu(m: Message, state: FSMContext):
 
     elif key == "account":
         bal, stars = await get_user_data(uid)
-        await m.answer(
-            tr(lang, "account", uid=uid, bal=bal, stars=stars) + "\n\n" + CARD_INFO,
-            reply_markup=topup_kb(lang),
-        )
+        await m.answer(tr(lang, "account", uid=uid, bal=bal, stars=stars))
 
     elif key == "topup":
-        await m.answer(tr(lang, "topup_info", card=CARD_INFO), reply_markup=topup_kb(lang))
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text=tr(lang, "topup_btn"), callback_data="send_receipt")]]
+        )
+        await m.answer(tr(lang, "topup_info", card=CARD_INFO), reply_markup=kb)
 
     elif key == "guide":
-        await m.answer(tr(lang, "guide", reward=REF_REWARD) + "\n\n" + CARD_INFO)
+        await m.answer(tr(lang, "guide", reward=REF_REWARD))
 
     elif key == "support":
         await state.set_state(States.waiting_support)
@@ -959,7 +927,7 @@ async def menu(m: Message, state: FSMContext):
         await show_slot(m, uid, lang)
 
     elif key == "admin":
-        if uid not in ADMIN_IDS:
+        if uid != ADMIN_ID:
             return await m.answer("❌ Siz admin emassiz!")
         await m.answer("🛠 <b>Admin panelga xush kelibsiz!</b>", reply_markup=admin_kb())
 
@@ -986,7 +954,7 @@ def admin_kb() -> InlineKeyboardMarkup:
 # ================== SON (KANALLAR STATISTIKASI) ==================
 async def record_joins(uid: int):
     """Foydalanuvchi hozir barcha kanalda a'zo ekanini bazaga yozib qo'yadi."""
-    if uid in ADMIN_IDS:
+    if uid == ADMIN_ID:
         return
     now = int(time.time())
     chs = await get_channels()
@@ -1109,10 +1077,7 @@ async def process_buy_stars(c: CallbackQuery):
         )
         if cur.rowcount == 0:
             await db.commit()
-            await c.answer(tr(lang, "no_funds"), show_alert=True)
-            # Mablag' yetmasa, karta ma'lumotini darrov ko'rsatamiz
-            await c.message.answer(tr(lang, "topup_info", card=CARD_INFO), reply_markup=topup_kb(lang))
-            return
+            return await c.answer(tr(lang, "no_funds"), show_alert=True)
         await db.execute("INSERT INTO orders(user_id, stars, price) VALUES(?, ?, ?)", (u.id, stars_count, price_str))
         await db.commit()
 
@@ -1132,7 +1097,7 @@ async def process_buy_stars(c: CallbackQuery):
         logging.error("Xaridni kanalga yuborishda xatolik: %s", e)
 
     try:
-        await notify_admins(c.bot, f"🔔 <b>Yangi xarid amalga oshirildi!</b>\n\n{order_text}")
+        await c.bot.send_message(ADMIN_ID, f"🔔 <b>Yangi xarid amalga oshirildi!</b>\n\n{order_text}")
     except Exception as e:
         logging.error("Xaridni adminga yuborishda xatolik: %s", e)
 
@@ -1185,8 +1150,8 @@ async def process_withdraw(c: CallbackQuery):
         ]]
     )
     try:
-        await notify_admins(
-            c.bot, f"🔔 <b>Yangi gift so'rovi tushdi!</b> (#{wid})\n\n{order_text}", reply_markup=admin_kb_gift
+        await c.bot.send_message(
+            ADMIN_ID, f"🔔 <b>Yangi gift so'rovi tushdi!</b> (#{wid})\n\n{order_text}", reply_markup=admin_kb_gift
         )
     except Exception as e:
         logging.error("Gift so'rovini adminga yuborishda xatolik: %s", e)
@@ -1197,7 +1162,7 @@ async def process_withdraw(c: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^gift_(ok|no)_\d+$"))
 async def admin_gift_decide(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     _, action, wid = c.data.split("_")
     wid = int(wid)
@@ -1270,14 +1235,13 @@ async def receipt_received(m: Message, state: FSMContext):
             InlineKeyboardButton(text="❌ Rad etish", callback_data=f"topup_no_{tid}"),
         ]]
     )
-    for admin in ADMIN_IDS:
-        try:
-            if ftype == "photo":
-                await m.bot.send_photo(admin, file_id, caption=text, reply_markup=kb)
-            else:
-                await m.bot.send_document(admin, file_id, caption=text, reply_markup=kb)
-        except Exception as e:
-            logging.warning("Chek adminga yuborilmadi (%s): %s", admin, e)
+    try:
+        if ftype == "photo":
+            await m.bot.send_photo(ADMIN_ID, file_id, caption=text, reply_markup=kb)
+        else:
+            await m.bot.send_document(ADMIN_ID, file_id, caption=text, reply_markup=kb)
+    except Exception as e:
+        logging.warning("Chek adminga yuborilmadi: %s", e)
     await m.answer(tr(lang, "topup_sent"))
 
 
@@ -1289,7 +1253,7 @@ async def receipt_wrong(m: Message):
 
 @router.callback_query(F.data.regexp(r"^topup_(ok|no)_\d+$"))
 async def admin_topup_decide(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     _, action, tid = c.data.split("_")
     tid = int(tid)
@@ -1361,7 +1325,7 @@ async def admin_topup_amount(m: Message, state: FSMContext):
 # ================== ADMIN: BAN / UNBAN ==================
 @router.callback_query(F.data == "admin_ban_menu")
 async def admin_ban_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_ban)
     kb = InlineKeyboardMarkup(
@@ -1390,7 +1354,7 @@ async def confirm_ban_user(m: Message, state: FSMContext):
 
 @router.callback_query(F.data.regexp(r"^do_ban_\d+$"))
 async def execute_ban(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     target_id = int(c.data.replace("do_ban_", ""))
 
@@ -1409,7 +1373,7 @@ async def execute_ban(c: CallbackQuery):
 
 @router.callback_query(F.data == "unban_list")
 async def unban_list_menu(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -1432,7 +1396,7 @@ async def unban_list_menu(c: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^unban_\d+$"))
 async def execute_unban(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     target_id = int(c.data.replace("unban_", ""))
 
@@ -1452,7 +1416,7 @@ async def execute_unban(c: CallbackQuery):
 # ================== ADMIN: PUL QO'SHISH ==================
 @router.callback_query(F.data == "admin_topup_menu")
 async def admin_topup_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_topup)
     await c.message.answer(
@@ -1495,7 +1459,7 @@ async def process_topup(m: Message, state: FSMContext):
 # ================== ADMIN: PUL AYIRISH ==================
 @router.callback_query(F.data == "admin_minus_menu")
 async def admin_minus_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_minus)
     await c.message.answer(
@@ -1543,7 +1507,7 @@ async def process_minus_balance(m: Message, state: FSMContext):
 # ================== ADMIN: STARS QO'SHISH ==================
 @router.callback_query(F.data == "admin_st_plus_menu")
 async def admin_st_plus_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_st_plus)
     await c.message.answer(
@@ -1591,7 +1555,7 @@ async def process_st_plus(m: Message, state: FSMContext):
 # ================== ADMIN: STARS AYIRISH ==================
 @router.callback_query(F.data == "admin_st_minus_menu")
 async def admin_st_minus_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_st_minus)
     await c.message.answer(
@@ -1640,7 +1604,7 @@ async def process_st_minus(m: Message, state: FSMContext):
 # ================== ADMIN: KANAL QO'SHISH/O'CHIRISH ==================
 @router.callback_query(F.data == "add_ch")
 async def admin_add_channel(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_channel)
     await c.message.answer(
@@ -1677,7 +1641,7 @@ async def save_new_channel(m: Message, state: FSMContext):
 
 @router.callback_query(F.data == "del_ch_menu")
 async def delete_channel_menu(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     channels = await get_channels()
     if not channels:
@@ -1693,7 +1657,7 @@ async def delete_channel_menu(c: CallbackQuery):
 
 @router.callback_query(F.data.startswith("delch_"))
 async def remove_channel(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     ch_username = c.data.replace("delch_", "", 1)
 
@@ -1719,8 +1683,8 @@ async def support_msg(m: Message, state: FSMContext):
         ]]
     )
     try:
-        await notify_admins(
-            m.bot,
+        await m.bot.send_message(
+            ADMIN_ID,
             "☎️ <b>Yangi murojaat</b>\n\n"
             f"👤 {html.escape(u.full_name)}\n🔗 Username: {uname}\n🆔 <code>{u.id}</code>\n\n"
             f"💬 {html.escape(m.text)}",
@@ -1733,7 +1697,7 @@ async def support_msg(m: Message, state: FSMContext):
 
 @router.callback_query(F.data.regexp(r"^reply_\d+_\d+$"))
 async def admin_reply_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     _, uid, mid = c.data.split("_")
     await state.set_state(States.waiting_reply)
@@ -1775,7 +1739,7 @@ async def cancel_admin(c: CallbackQuery, state: FSMContext):
 # ================== ADMIN: FOYDALANUVCHILAR ==================
 @router.callback_query(F.data == "users")
 async def users_list(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
@@ -1825,7 +1789,7 @@ async def send_packed(message: Message, lines: list[str], limit: int = 3800):
 
 @router.callback_query(F.data == "admin_refs")
 async def admin_refs(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
@@ -1878,7 +1842,7 @@ async def admin_refs(c: CallbackQuery):
 # ================== ADMIN: STATISTIKA ==================
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await c.answer()
     today = int(datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
@@ -1907,8 +1871,6 @@ async def admin_stats(c: CallbackQuery):
         gifts_done = await one("SELECT COUNT(*) FROM withdraws WHERE status='done'")
         promos = await one("SELECT COUNT(*) FROM promo_codes WHERE active=1")
         sched = await one("SELECT COUNT(*) FROM scheduled WHERE done=0")
-        slot_n = await one("SELECT COUNT(*) FROM star_payments")
-        slot_sum = await one("SELECT SUM(amount) FROM star_payments")
 
     await c.message.answer(
         "📊 <b>Statistika</b>\n\n"
@@ -1921,8 +1883,7 @@ async def admin_stats(c: CallbackQuery):
         f"⭐️ Foydalanuvchilar starsi: <b>{sum_stars:,}</b> ta\n\n"
         f"🛒 Stars xaridlari: <b>{orders_n}</b> ta — <b>{orders_sum:,}</b> so'm\n"
         f"💳 Tasdiqlangan to'ldirishlar: <b>{top_n}</b> ta — <b>{top_sum:,}</b> so'm\n"
-        f"🎁 Bajarilgan giftlar: <b>{gifts_done}</b> ta\n"
-        f"🎰 Slot to'lovlari: <b>{slot_n}</b> ta — <b>{slot_sum:,}</b> ⭐️ (bot Stars balansiga tushgan)\n\n"
+        f"🎁 Bajarilgan giftlar: <b>{gifts_done}</b> ta\n\n"
         f"⏳ Kutilayotgan cheklar: <b>{top_pending}</b>\n"
         f"⏳ Kutilayotgan giftlar: <b>{gifts_pending}</b>\n"
         f"🎟 Faol promokodlar: <b>{promos}</b>\n"
@@ -1933,7 +1894,7 @@ async def admin_stats(c: CallbackQuery):
 # ================== ADMIN: FOYDALANUVCHINI QIDIRISH ==================
 @router.callback_query(F.data == "admin_find")
 async def admin_find_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_find)
     await c.message.answer(
@@ -1997,7 +1958,7 @@ async def admin_find_result(m: Message, state: FSMContext):
 # ================== ADMIN: PROMOKODLAR ==================
 @router.callback_query(F.data == "admin_promo_menu")
 async def admin_promo_menu(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -2011,7 +1972,7 @@ async def admin_promo_menu(c: CallbackQuery):
 
 @router.callback_query(F.data.in_({"pnew_stars", "pnew_balance"}))
 async def promo_new_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     kind = c.data.replace("pnew_", "")
     await state.set_state(States.promo_new)
@@ -2082,7 +2043,7 @@ async def promo_new_save(m: Message, state: FSMContext):
 
 @router.callback_query(F.data == "promo_list")
 async def promo_list(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
@@ -2106,7 +2067,7 @@ async def promo_list(c: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^pdel_\d+$"))
 async def promo_delete(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     rid = int(c.data.replace("pdel_", ""))
     async with aiosqlite.connect(DB_PATH) as db:
@@ -2215,7 +2176,7 @@ async def on_my_chat_member(ev: ChatMemberUpdated):
 # ================== ADMIN: REKLAMA TARQATISH ==================
 @router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await state.set_state(States.waiting_broadcast)
     await c.message.answer(
@@ -2281,7 +2242,7 @@ async def run_broadcast(bot: Bot, msg: Message, msg_id: int):
 
 @router.callback_query(F.data.regexp(r"^bc_yes_\d+$"))
 async def broadcast_send(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     if BROADCAST_RUNNING:
         return await c.answer("⏳ Oldingi reklama hali yuborilmoqda, kuting.", show_alert=True)
@@ -2310,7 +2271,7 @@ def ad_channels_kb(channels: list[tuple[str, str]], selected: list[str]) -> Inli
 
 @router.callback_query(F.data == "admin_ad_menu")
 async def admin_ad_menu(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     channels = await get_channels()
     if not channels:
@@ -2328,7 +2289,7 @@ async def admin_ad_menu(c: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("adch_"))
 async def admin_ad_pick(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     username = c.data.replace("adch_", "", 1)
     data = await state.get_data()
@@ -2355,7 +2316,7 @@ async def admin_ad_pick(c: CallbackQuery, state: FSMContext):
 
 @router.message(Command("ad"))
 async def admin_ad_next(m: Message, command: CommandObject, state: FSMContext):
-    if m.from_user.id not in ADMIN_IDS:
+    if m.from_user.id != ADMIN_ID:
         return
     if (command.args or "").strip().lower() != "next":
         return await m.answer("⚠️ To'g'ri buyruq: <code>/ad next</code>")
@@ -2376,7 +2337,7 @@ async def admin_ad_next(m: Message, command: CommandObject, state: FSMContext):
 
 @router.message(States.ad_text)
 async def admin_ad_send(m: Message, state: FSMContext):
-    if m.from_user.id not in ADMIN_IDS:
+    if m.from_user.id != ADMIN_ID:
         return
     data = await state.get_data()
     selected: list[str] = data.get("ad_sel", [])
@@ -2416,7 +2377,7 @@ def parse_when(text: str) -> int | None:
 
 @router.callback_query(F.data == "admin_sched_menu")
 async def admin_sched_menu(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -2431,7 +2392,7 @@ async def admin_sched_menu(c: CallbackQuery):
 
 @router.callback_query(F.data.in_({"sched_new_users", "sched_new_channels"}))
 async def sched_new_start(c: CallbackQuery, state: FSMContext):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     kind = c.data.replace("sched_new_", "")
     await state.set_state(States.sched_msg)
@@ -2478,7 +2439,7 @@ async def sched_got_time(m: Message, state: FSMContext):
 
 @router.callback_query(F.data == "sched_list")
 async def sched_list(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT id, kind, run_at FROM scheduled WHERE done=0 ORDER BY run_at")
@@ -2500,7 +2461,7 @@ async def sched_list(c: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^sched_del_\d+$"))
 async def sched_delete(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     sid = int(c.data.replace("sched_del_", ""))
     async with aiosqlite.connect(DB_PATH) as db:
@@ -2555,75 +2516,12 @@ def _backup_sync(path: str):
         src.close()
 
 
-def _replace_db(src: str):
-    """Yangi .db faylini ishchi bazaga almashtiradi (eski wal/shm ham tozalanadi)."""
-    for suffix in ("-wal", "-shm", "-journal"):
-        try:
-            os.remove(DB_PATH + suffix)
-        except OSError:
-            pass
-    shutil.move(src, DB_PATH)
-
-
-async def restore_from_telegram(bot: Bot) -> bool:
-    """Adminlardan biridagi pinned .db zaxiradan bazani tiklaydi."""
-    for admin in ADMIN_IDS:
-        try:
-            chat = await bot.get_chat(admin)
-        except Exception as e:
-            logging.warning("get_chat xato (%s): %s", admin, e)
-            continue
-        pinned = getattr(chat, "pinned_message", None)
-        doc = getattr(pinned, "document", None) if pinned else None
-        if not doc or not (doc.file_name or "").lower().endswith(".db"):
-            continue
-        try:
-            file = await bot.get_file(doc.file_id)
-            tmp = os.path.join(tempfile.gettempdir(), "bot_restore.db")
-            await bot.download_file(file.file_path, tmp)
-            await asyncio.to_thread(_replace_db, tmp)
-            logging.info("Baza (%s) zaxirasidan tiklandi: %s", admin, doc.file_name)
-            return True
-        except Exception as e:
-            logging.error("Baza tiklash xato (%s): %s", admin, e)
-    return False
-
-
 async def send_backup(bot: Bot, caption: str = "💾 Baza zaxirasi"):
     name = f"bot_backup_{datetime.now(TZ):%Y%m%d_%H%M}.db"
     path = os.path.join(tempfile.gettempdir(), name)
     await asyncio.to_thread(_backup_sync, path)
     try:
-        # har bir admin chatida eski pinned zaxirani yangisiga almashtiramiz
-        for admin in ADMIN_IDS:
-            try:
-                chat = await bot.get_chat(admin)
-                pinned = getattr(chat, "pinned_message", None)
-                old_doc = getattr(pinned, "document", None) if pinned else None
-                if old_doc and (old_doc.file_name or "").lower().endswith(".db"):
-                    try:
-                        await bot.unpin_chat_message(admin, pinned.message_id)
-                    except Exception:
-                        pass
-                    try:
-                        await bot.delete_message(admin, pinned.message_id)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            try:
-                msg = await bot.send_document(
-                    admin,
-                    FSInputFile(path, filename=name),
-                    caption=caption,
-                    disable_notification=True,
-                )
-                try:
-                    await bot.pin_chat_message(admin, msg.message_id, disable_notification=True)
-                except Exception as e:
-                    logging.warning("Zaxirani pin qilish xato (%s): %s", admin, e)
-            except Exception as e:
-                logging.warning("Zaxira yuborilmadi (%s): %s", admin, e)
+        await bot.send_document(ADMIN_ID, FSInputFile(path, filename=name), caption=caption)
     finally:
         try:
             os.remove(path)
@@ -2631,32 +2529,9 @@ async def send_backup(bot: Bot, caption: str = "💾 Baza zaxirasi"):
             pass
 
 
-async def _handle_db_upload(m: Message, doc) -> bool:
-    """Admin yuborgan .db faylni bazaga almashtiradi."""
-    if not doc or not (doc.file_name or "").lower().endswith(".db"):
-        return False
-    tmp = os.path.join(tempfile.gettempdir(), "bot_upload.db")
-    file = await m.bot.get_file(doc.file_id)
-    await m.bot.download_file(file.file_path, tmp)
-    await asyncio.to_thread(_replace_db, tmp)
-    await init_db()
-    return True
-
-
-@router.message(F.document, F.from_user.id.in_(ADMIN_IDS))
-async def admin_restore_db(m: Message, state: FSMContext):
-    if not await _handle_db_upload(m, m.document):
-        return
-    await state.clear()
-    await m.answer(
-        "✅ <b>Baza tiklandi!</b>\n\n"
-        "Endi bot eski ma'lumotlar bilan ishlaydi. Keyingi zaxira 10 daqiqadan so'ng avtomatik saqlanadi."
-    )
-
-
 @router.callback_query(F.data == "admin_backup")
 async def admin_backup(c: CallbackQuery):
-    if c.from_user.id not in ADMIN_IDS:
+    if c.from_user.id != ADMIN_ID:
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     await c.answer("⏳ Zaxira tayyorlanmoqda...")
     try:
@@ -2670,16 +2545,15 @@ async def backup_loop(bot: Bot):
     while True:
         await asyncio.sleep(BACKUP_INTERVAL)
         try:
-            await send_backup(bot, "💾 Avtomatik zaxira (10 daqiqada bir marta)")
+            await send_backup(bot, "💾 Avtomatik kunlik zaxira")
         except Exception as e:
             logging.error("Avtomatik zaxira xato: %s", e)
 
 
 # =====================================================================
 # 🎰 SLOT (OPEN) — har bir aylantirish FOYDALANUVCHINING TELEGRAM hisobidagi
-# Stars orqali to'lanadi (invoice). Bu Stars BOTNING Telegram Stars balansiga
-# tushadi (bot egasi akkauntida ko'rinadi). Botdagi stars balansi aylantirishga
-# ishlatilmaydi, u faqat yutuqlar va "Gift yechish" uchun.
+# Stars orqali to'lanadi (invoice). Botdagi stars balansi aylantirishga ishlatilmaydi,
+# u faqat yutuqlar va "Gift yechish" uchun.
 # =====================================================================
 SL = {
     "uz": {
@@ -2687,8 +2561,7 @@ SL = {
             "🎰 <b>SLOT — Open</b>\n\n"
             "┃ 🎰 ┃ 🎰 ┃ 🎰 ┃\n\n"
             "💵 Aylantirish narxi: <b>{cost} ⭐️</b> (Telegram hisobingizdan to'lanadi)\n"
-            "🏆 Har <b>{every}-aylantirishda</b> 7️⃣7️⃣7️⃣ tushadi — yutuq: <b>{prize} ⭐️</b>\n"
-            "🎯 Yutishgacha: <b>{left}</b> ta aylantirish\n\n"
+            "🏆 Har <b>omadingizda </b> 7️⃣7️⃣7️⃣ tushishi mumkin — yutuq: <b>{prize} ⭐️</b>\n"
             "⭐️ Botdagi balansingiz (yutuqlar): <b>{stars}</b> ta"
         ),
         "spin_btn": "🎰 Aylantirish ({cost} ⭐️)",
@@ -2696,7 +2569,7 @@ SL = {
         "inv_desc": "Telegram hisobingizdan {n} ⭐️ yechiladi va slot aylanadi",
         "paid_wait": "✅ To'lov qabul qilindi! Slot aylanmoqda...",
         "rolling": "🎰 <b>Aylanmoqda...</b>\n\n┃ {a} ┃ {b} ┃ {c} ┃",
-        "lose": "🎰 <b>Natija</b>\n\n┃ {a} ┃ {b} ┃ {c} ┃\n\n😔 Bu safar yutuq yo'q. Yana urinib ko'ring!\n🎯 Yutishgacha: <b>{left}</b> ta aylantirish\n⭐️ Botdagi balans: <b>{stars}</b>",
+        "lose": "🎰 <b>Natija</b>\n\n┃ {a} ┃ {b} ┃ {c} ┃\n\n😔 Bu safar yutuq yo'q. Yana urinib ko'ring!\n🎯 Yutush uchun: omad kerak\n⭐️ Botdagi balans: <b>{stars}</b>",
         "win": "🎰 <b>Natija</b>\n\n┃ 7️⃣ ┃ 7️⃣ ┃ 7️⃣ ┃\n\n🎉 <b>777! Siz yutdingiz — {prize} ⭐️!</b>\n⭐️ Botdagi balans: <b>{stars}</b>",
     },
     "ru": {
@@ -2704,7 +2577,7 @@ SL = {
             "🎰 <b>СЛОТ — Open</b>\n\n"
             "┃ 🎰 ┃ 🎰 ┃ 🎰 ┃\n\n"
             "💵 Цена вращения: <b>{cost} ⭐️</b> (оплата с вашего счёта Telegram)\n"
-            "🏆 Каждое <b>{every}-е вращение</b> даёт 7️⃣7️⃣7️⃣ — выигрыш: <b>{prize} ⭐️</b>\n"
+            "🏆 Каждое <b>{every}-е вращение</b> гарантированно даёт 7️⃣7️⃣7️⃣ — выигрыш: <b>{prize} ⭐️</b>\n"
             "🎯 До выигрыша: <b>{left}</b> вращ.\n\n"
             "⭐️ Баланс в боте (выигрыши): <b>{stars}</b>"
         ),
@@ -2731,12 +2604,6 @@ async def _slot_state(uid: int) -> tuple[int, int]:
     if not row:
         return 0, 0
     return row[0] or 0, row[1] or 0
-
-
-async def slot_totals() -> tuple[int, int]:
-    """Slot orqali botning Telegram Stars balansiga tushgan jami: (to'lovlar soni, jami ⭐️)."""
-    row = await safe_fetchone("SELECT COUNT(*), COALESCE(SUM(amount),0) FROM star_payments")
-    return (row[0], row[1]) if row else (0, 0)
 
 
 def _slot_kb(lang: str) -> InlineKeyboardMarkup:
@@ -2768,7 +2635,7 @@ async def slot_spin(c: CallbackQuery):
         title=sl(lang, "inv_title"),
         description=sl(lang, "inv_desc", n=SPIN_COST),
         payload=f"slot_spin:{u.id}:{int(time.time())}",
-        currency="XTR",  # Telegram Stars -> botning Stars balansiga tushadi
+        currency="XTR",  # Telegram Stars (foydalanuvchining o'z Telegram hisobi)
         prices=[LabeledPrice(label="1 spin", amount=SPIN_COST)],
     )
 
@@ -2822,8 +2689,8 @@ async def slot_paid(m: Message):
         text = sl(lang, "win", prize=WIN_PRIZE, stars=stars)
         try:
             uname = f"@{u.username}" if u.username else "yo'q"
-            await notify_admins(
-                m.bot,
+            await m.bot.send_message(
+                ADMIN_ID,
                 f"🎰 <b>Bu odam 777 tushirdi!</b>\n\n👤 {html.escape(u.full_name)} ({uname})\n"
                 f"🆔 <code>{u.id}</code>\n🏆 Yutuq: <b>{WIN_PRIZE} ⭐️</b> (aylantirish #{cnt})",
             )
@@ -2842,36 +2709,15 @@ async def slot_paid(m: Message):
     except Exception:
         await m.answer(text, reply_markup=_slot_kb(lang))
 
-    # Adminlarga har bir to'lov haqida xabar + botning Stars balansiga tushgan jami summa
+    # Adminga har bir to'lov haqida xabar
     try:
-        n_pay, total_stars = await slot_totals()
-        await notify_admins(
-            m.bot,
+        await m.bot.send_message(
+            ADMIN_ID,
             f"💳 <b>Slot to'lovi:</b> {html.escape(u.full_name)} (<code>{u.id}</code>) — "
-            f"<b>{sp.total_amount} ⭐️</b> (spin #{cnt})\n"
-            f"🏦 Botning Stars balansiga slotdan jami tushgan: <b>{total_stars:,} ⭐️</b> ({n_pay} ta to'lov)",
+            f"<b>{sp.total_amount} ⭐️</b> (spin #{cnt})",
         )
     except Exception:
         pass
-
-
-@router.message(Command("slotstars"))
-async def admin_slot_stars(m: Message):
-    """Admin: slotdan botning Telegram Stars balansiga jami qancha tushganini ko'rsatadi."""
-    if m.from_user.id not in ADMIN_IDS:
-        return
-    n_pay, total_stars = await slot_totals()
-    row = await safe_fetchone("SELECT COALESCE(SUM(spin_count),0) FROM users")
-    spins = row[0] if row else 0
-    wins = spins // WIN_EVERY
-    await m.answer(
-        "🎰 <b>Slot hisoboti</b>\n\n"
-        f"💳 To'lovlar: <b>{n_pay}</b> ta\n"
-        f"🏦 Botning Stars balansiga tushgan: <b>{total_stars:,} ⭐️</b>\n"
-        f"🏆 Taxminan berilgan yutuqlar (botdagi balansga): <b>{wins * WIN_PRIZE:,} ⭐️</b>\n\n"
-        "ℹ️ Haqiqiy balansni bot profilidan ko'ring: @BotFather emas, "
-        "<b>bot profili → ⋯ → Balans</b> (bot egasi akkauntida)."
-    )
 
 
 # ================== MAIN (ISHGA TUSHIRISH) ==================
@@ -2879,41 +2725,20 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     if ":" not in BOT_TOKEN:
         raise SystemExit(
-            "❌ BOT_TOKEN topilmadi! BOT_TOKEN muhit o'zgaruvchisiga yoki fayl boshidagi "
-            "BOT_TOKEN qatoriga @BotFather bergan tokenni kiriting."
+            "❌ BOT_TOKEN to'g'ri emas! Faylning tepasida BOT_TOKEN = \"...\" qatoriga "
+            "@BotFather bergan haqiqiy (yangi) tokenni yozing (yoki BOT_TOKEN muhit o'zgaruvchisini o'rnating)."
         )
+    await init_db()
+    logging.info("Baza fayli: %s", DB_PATH)
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
-
     sub_mw = SubMiddleware()
     router.message.middleware(sub_mw)
     router.callback_query.middleware(sub_mw)
-
-    # features.py: sozlash, anti-flood, kunlik bonus, admin buyruqlari
-    features.configure(DB_PATH, ADMIN_IDS, ADMIN_ID)
-    throttle = features.ThrottleMiddleware(0.6)
-    dp.message.outer_middleware(throttle)
-    dp.callback_query.outer_middleware(throttle)
-    features.router.message.middleware(sub_mw)
-    dp.include_router(features.router)  # router'dan OLDIN bo'lishi shart
     dp.include_router(router)
-
-    # Server qayta ishga tushganda bazani Telegram'dagi zaxiradan tiklaymiz
-    if await restore_from_telegram(bot):
-        logging.info("Baza Telegram zaxirasidan tiklandi")
-
-    await init_db()
-    logging.info("Baza fayli: %s", DB_PATH)
-    if start_keepalive():
-        logging.info("Health-check server ishga tushdi (PORT=%s)", os.getenv("PORT"))
-
     await bot.delete_webhook(drop_pending_updates=True)
 
-    tasks = [
-        asyncio.create_task(scheduler_loop(bot)),
-        asyncio.create_task(backup_loop(bot)),
-        asyncio.create_task(features.daily_report_loop(bot)),
-    ]
+    tasks = [asyncio.create_task(scheduler_loop(bot)), asyncio.create_task(backup_loop(bot))]
     try:
         await dp.start_polling(bot)
     finally:
