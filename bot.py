@@ -95,7 +95,7 @@ CARD_INFO = (
 TZ = timezone(timedelta(hours=5))  # Toshkent vaqti
 BACKUP_INTERVAL = 24 * 3600  # Avtomatik zaxira oralig'i (soniya)
 
-CREATOR = "@N_57001"
+CREATOR = "@Javohir_Crown"
 CREATED_DATE = "20/10/2026"
 
 # ================== MATNLAR (UZ / RU) ==================
