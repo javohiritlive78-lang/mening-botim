@@ -33,7 +33,7 @@ from aiogram.types import (
 # ================== SOZLAMALAR ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Token: BOT_TOKEN muhit o'zgaruvchisidan olinadi. Bo'lmasa, quyidagi qatorga YANGI tokenni yozing.
-BOT_TOKEN = os.getenv("8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM") or "8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM"
+BOT_TOKEN = os.getenv("8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM", "8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM")
 # IKKI ADMIN: bu yerga ikkala adminning Telegram raqamli ID sini yozing.
 ADMIN_ID_1 = 7676544759
 ADMIN_ID_2 = 5200398952  # Ikkinchi admin ID sini almashtiring
@@ -340,6 +340,7 @@ BTN = {
         "guide": "📚 Qo'llanma",
         "info": "ℹ️ Ma'lumot",
         "slot": "🎰 Open",
+        "tasks": "📝 Vazifalar",
         "lang": "🌐 Til",
         "son": "📊 Son",
         "admin": "🛠 Admin panel",
@@ -357,6 +358,7 @@ BTN = {
         "guide": "📚 Инструкция",
         "info": "ℹ️ Информация",
         "slot": "🎰 Open",
+        "tasks": "📝 Задания",
         "lang": "🌐 Язык",
         "son": "📊 Количество",
         "admin": "🛠 Admin panel",
@@ -398,6 +400,11 @@ class States(StatesGroup):
     waiting_find = State()
     sched_msg = State()
     sched_time = State()
+    task_link = State()
+    task_text = State()
+    task_reward = State()
+    task_photo = State()
+    task_description = State()
 
 
 # ================== YORDAMCHI ==================
@@ -496,6 +503,23 @@ async def init_db():
                 user_id INTEGER,
                 joined_at INTEGER,
                 PRIMARY KEY(username, user_id)
+            );
+            CREATE TABLE IF NOT EXISTS tasks(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                link TEXT NOT NULL,
+                description TEXT NOT NULL,
+                reward INTEGER NOT NULL,
+                active INTEGER DEFAULT 1,
+                created_at INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS task_submissions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                photo_file_id TEXT NOT NULL,
+                proof_text TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at INTEGER
             );
             """
         )
@@ -604,7 +628,8 @@ def main_kb(uid: int, lang: str) -> ReplyKeyboardMarkup:
         [b("promo"), b("top")],
         [b("support"), b("guide")],
         [b("slot"), b("son")],
-        [b("info"), b("lang")],
+        [b("tasks"), b("info")],
+        [b("lang")],
     ]
     if is_admin(uid):
         rows.append([b("admin")])
@@ -962,6 +987,9 @@ async def menu(m: Message, state: FSMContext):
     elif key == "slot":
         await show_slot(m, uid, lang)
 
+    elif key == "tasks":
+        await show_user_tasks(m)
+
     elif key == "admin":
         if not is_admin(uid):
             return await m.answer("❌ Siz admin emassiz!")
@@ -983,6 +1011,7 @@ def admin_kb() -> InlineKeyboardMarkup:
             [b("💰 Pul qo'shish", "admin_topup_menu"), b("💸 Pul ayirish", "admin_minus_menu")],
             [b("⭐️ Stars qo'shish", "admin_st_plus_menu"), b("📉 Stars ayirish", "admin_st_minus_menu")],
             [b("➕ Kanal qo'shish", "add_ch"), b("🗑 Kanalni o'chirish", "del_ch_menu")],
+            [b("📝 Vazifa yaratish", "task_create"), b("📋 Vazifalar", "task_admin_list")],
         ]
     )
 
@@ -2765,6 +2794,314 @@ async def slot_paid(m: Message):
         )
     except Exception:
         pass
+
+
+
+# ================== VAZIFALAR TIZIMI ==================
+def task_user_list_kb(rows):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"📝 {int(task_id)}-vazifa", callback_data=f"task_open_{int(task_id)}")]
+        for task_id, _desc, _reward in rows
+    ])
+
+
+async def show_user_tasks(m: Message):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id, description, reward FROM tasks WHERE active=1 ORDER BY id DESC"
+        )
+        rows = await cur.fetchall()
+    if not rows:
+        return await m.answer("📭 Hozircha faol vazifalar yo'q.")
+    await m.answer(
+        "📝 <b>Vazifalar bo'limi</b>\n\nQuyidagi vazifalardan birini tanlang:",
+        reply_markup=task_user_list_kb(rows)
+    )
+
+
+@router.callback_query(F.data == "task_create")
+async def task_create_start(c: CallbackQuery, state: FSMContext):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    await state.clear()
+    await state.set_state(States.task_link)
+    await c.message.answer("🔗 Yangi vazifa uchun havolani yuboring:")
+    await c.answer()
+
+
+@router.message(States.task_link, F.text)
+async def task_get_link(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
+    link = m.text.strip()
+    if not re.match(r"^https?://", link):
+        return await m.answer("❌ Havola https:// yoki http:// bilan boshlansin. Qayta yuboring:")
+    await state.update_data(task_link=link)
+    await state.set_state(States.task_text)
+    await m.answer("✍️ Endi vazifa matnini yuboring:")
+
+
+@router.message(States.task_text, F.text)
+async def task_get_text(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
+    description = m.text.strip()
+    if len(description) < 3:
+        return await m.answer("Matn juda qisqa. Qayta yuboring:")
+    await state.update_data(task_description=description)
+    await state.set_state(States.task_reward)
+    await m.answer("⭐️ Vazifa uchun beriladigan Stars miqdorini raqam bilan yozing:")
+
+
+@router.message(States.task_reward, F.text)
+async def task_get_reward(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
+    reward = parse_int(m.text)
+    if reward is None or reward < 1 or reward > 100000:
+        return await m.answer("❌ 1 dan 100000 gacha bo'lgan butun son kiriting:")
+    data = await state.get_data()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO tasks(link, description, reward, active, created_at) VALUES(?,?,?,1,?)",
+            (data["task_link"], data["task_description"], reward, int(time.time()))
+        )
+        task_id = cur.lastrowid
+        cur = await db.execute("SELECT id FROM users")
+        user_ids = [r[0] for r in await cur.fetchall()]
+        await db.commit()
+    await state.clear()
+
+    text = (
+        f"🆕 <b>YANGI VAZIFA!</b>\n\n"
+        f"📝 Vazifa raqami: <b>#{task_id}</b>\n"
+        f"📌 {html.escape(data['task_description'])}\n"
+        f"⭐️ Mukofot: <b>{reward} Stars</b>\n\n"
+        f"Vazifani bajarish uchun pastdagi tugmani bosing."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"📝 {task_id}-vazifani ochish", callback_data=f"task_open_{task_id}")],
+        [InlineKeyboardButton(text="🔗 Vazifa havolasi", url=data["task_link"])]
+    ])
+    sent = 0
+    for uid in user_ids:
+        try:
+            await m.bot.send_message(uid, text, reply_markup=kb)
+            sent += 1
+        except Exception:
+            pass
+    await m.answer(
+        f"✅ <b>Vazifa #{task_id} yaratildi!</b>\n\n"
+        f"👥 Yuborildi: {sent}/{len(user_ids)} foydalanuvchiga."
+    )
+
+
+@router.callback_query(F.data.regexp(r"^task_open_\d+$"))
+async def task_open(c: CallbackQuery, state: FSMContext):
+    task_id = int(c.data.rsplit("_", 1)[1])
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT link, description, reward FROM tasks WHERE id=? AND active=1",
+            (task_id,)
+        )
+        task = await cur.fetchone()
+        cur = await db.execute(
+            "SELECT status FROM task_submissions WHERE task_id=? AND user_id=? "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id, c.from_user.id)
+        )
+        previous = await cur.fetchone()
+    if not task:
+        return await c.answer("Bu vazifa topilmadi yoki yopilgan.", show_alert=True)
+    if previous and previous[0] == "approved":
+        return await c.answer("Bu vazifa uchun Stars olgansiz.", show_alert=True)
+    if previous and previous[0] == "pending":
+        return await c.answer("Yuborgan isbotingiz admin tekshiruvida.", show_alert=True)
+
+    await state.clear()
+    await state.update_data(task_id=task_id)
+    await state.set_state(States.task_photo)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Vazifa havolasini ochish", url=task[0])]
+    ])
+    await c.message.answer(
+        f"📝 <b>#{task_id}-vazifa</b>\n\n"
+        f"{html.escape(task[1])}\n\n"
+        f"⭐️ Mukofot: <b>{task[2]} Stars</b>\n\n"
+        "1️⃣ Havoladagi vazifani bajaring.\n"
+        "2️⃣ Bajarilganini tasdiqlovchi <b>rasm</b> yuboring.",
+        reply_markup=kb
+    )
+    await c.answer()
+
+
+@router.message(States.task_photo, F.photo)
+async def task_get_photo(m: Message, state: FSMContext):
+    data = await state.get_data()
+    await state.update_data(task_photo=m.photo[-1].file_id)
+    await state.set_state(States.task_description)
+    await m.answer("✍️ Endi vazifa bajarilganini izohlovchi matnni yuboring:")
+
+
+@router.message(States.task_photo)
+async def task_photo_invalid(m: Message):
+    await m.answer("⚠️ Iltimos, vazifa bajarilganini ko'rsatuvchi rasm yuboring.")
+
+
+@router.message(States.task_description, F.text)
+async def task_submit(m: Message, state: FSMContext):
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    photo_id = data.get("task_photo")
+    proof_text = m.text.strip()
+    if not task_id or not photo_id or not proof_text:
+        return await m.answer("❌ Ma'lumot yetishmayapti. /start bosing va qayta urinib ko'ring.")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT reward FROM tasks WHERE id=? AND active=1", (task_id,))
+        task = await cur.fetchone()
+        if not task:
+            await state.clear()
+            return await m.answer("❌ Bu vazifa endi faol emas.")
+        cur = await db.execute(
+            "INSERT INTO task_submissions(task_id,user_id,photo_file_id,proof_text,status,created_at) "
+            "VALUES(?,?,?,?, 'pending', ?)",
+            (task_id, m.from_user.id, photo_id, proof_text, int(time.time()))
+        )
+        submission_id = cur.lastrowid
+        await db.commit()
+    await state.clear()
+
+    user_name = html.escape(m.from_user.full_name or "Foydalanuvchi")
+    username = f"@{html.escape(m.from_user.username)}" if m.from_user.username else "yo'q"
+    admin_caption = (
+        f"📥 <b>VAZIFA BAJARILDI — TEKSHIRISH KERAK</b>\n\n"
+        f"📝 Vazifa: <b>#{task_id}</b>\n"
+        f"📨 Ariza: <b>#{submission_id}</b>\n"
+        f"👤 Kim yubordi: {user_name} ({username})\n"
+        f"🆔 ID: <code>{m.from_user.id}</code>\n"
+        f"⭐️ Mukofot: <b>{task[0]} Stars</b>\n\n"
+        f"✍️ Foydalanuvchi matni:\n{html.escape(proof_text)}"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"task_approve_{submission_id}"),
+            InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"task_reject_{submission_id}")
+        ]
+    ])
+    for admin_id in ADMIN_IDS:
+        try:
+            await m.bot.send_photo(
+                admin_id, photo_id, caption=admin_caption, reply_markup=kb
+            )
+        except Exception:
+            try:
+                await m.bot.send_message(admin_id, admin_caption, reply_markup=kb)
+                await m.bot.send_photo(admin_id, photo_id)
+            except Exception:
+                logging.exception("Vazifa arizasini adminga yuborib bo'lmadi: %s", admin_id)
+    await m.answer("✅ Rasmingiz va matningiz adminga yuborildi. Tekshiruv natijasini kuting.")
+
+
+@router.message(States.task_description)
+async def task_text_invalid(m: Message):
+    await m.answer("⚠️ Iltimos, vazifa haqida matn yuboring.")
+
+
+@router.callback_query(F.data.regexp(r"^task_approve_\d+$"))
+async def task_approve(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    submission_id = int(c.data.rsplit("_", 1)[1])
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT s.user_id, s.task_id, t.reward FROM task_submissions s "
+            "JOIN tasks t ON t.id=s.task_id WHERE s.id=? AND s.status='pending'",
+            (submission_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return await c.answer("Ariza allaqachon ko'rib chiqilgan.", show_alert=True)
+        uid, task_id, reward = row
+        cur = await db.execute(
+            "UPDATE task_submissions SET status='approved' WHERE id=? AND status='pending'",
+            (submission_id,)
+        )
+        if cur.rowcount:
+            await db.execute("UPDATE users SET stars=stars+? WHERE id=?", (reward, uid))
+        await db.commit()
+    if cur.rowcount:
+        try:
+            await c.bot.send_message(
+                uid, f"🎉 <b>Vazifa #{task_id} tasdiqlandi!</b>\n\n"
+                     f"Hisobingizga <b>{reward} ⭐️ Stars</b> qo'shildi."
+            )
+        except Exception:
+            pass
+        await c.message.edit_caption(
+            caption=(c.message.caption or "") + "\n\n✅ <b>TASDIQLANDI</b>",
+            reply_markup=None
+        )
+        await c.answer("Stars hisobga qo'shildi.")
+    else:
+        await c.answer("Ariza allaqachon ko'rib chiqilgan.", show_alert=True)
+
+
+@router.callback_query(F.data.regexp(r"^task_reject_\d+$"))
+async def task_reject(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    submission_id = int(c.data.rsplit("_", 1)[1])
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT user_id, task_id FROM task_submissions WHERE id=? AND status='pending'",
+            (submission_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return await c.answer("Ariza allaqachon ko'rib chiqilgan.", show_alert=True)
+        uid, task_id = row
+        cur = await db.execute(
+            "UPDATE task_submissions SET status='rejected' WHERE id=? AND status='pending'",
+            (submission_id,)
+        )
+        await db.commit()
+    if cur.rowcount:
+        try:
+            await c.bot.send_message(
+                uid,
+                f"❌ <b>Vazifa #{task_id} tasdiqlanmadi.</b>\n\n"
+                "Siz hali vazifani to'liq bajarmadingiz. Iltimos, qayta bajarib, "
+                "yangi rasm va matn yuborishingiz mumkin."
+            )
+        except Exception:
+            pass
+        await c.message.edit_caption(
+            caption=(c.message.caption or "") + "\n\n❌ <b>BEKOR QILINDI</b>",
+            reply_markup=None
+        )
+        await c.answer("Bekor qilindi. Foydalanuvchi qayta topshira oladi.")
+    else:
+        await c.answer("Ariza allaqachon ko'rib chiqilgan.", show_alert=True)
+
+
+@router.callback_query(F.data == "task_admin_list")
+async def task_admin_list(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id, reward, active FROM tasks ORDER BY id DESC LIMIT 30"
+        )
+        rows = await cur.fetchall()
+    if not rows:
+        return await c.answer("Vazifalar hali yo'q.", show_alert=True)
+    lines = [
+        f"#{task_id} — ⭐️ {reward} — {'🟢 faol' if active else '🔴 yopiq'}"
+        for task_id, reward, active in rows
+    ]
+    await c.message.answer("📋 <b>Vazifalar ro'yxati</b>\n\n" + "\n".join(lines))
+    await c.answer()
+
 
 
 # ================== MAIN (ISHGA TUSHIRISH) ==================
