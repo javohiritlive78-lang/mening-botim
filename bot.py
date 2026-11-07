@@ -33,7 +33,7 @@ from aiogram.types import (
 # ================== SOZLAMALAR ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Token: BOT_TOKEN muhit o'zgaruvchisidan olinadi. Bo'lmasa, quyidagi qatorga YANGI tokenni yozing.
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "8603889269:AAGr-b_iUTtqUdjVzLKvz-x-Vv6vc38PUXA"
+BOT_TOKEN = os.getenv("8603889269:AAGr-b_iUTtqUdjVzLKvz-x-Vv6vc38PUXA") or "8603889269:AAGr-b_iUTtqUdjVzLKvz-x-Vv6vc38PUXA"
 ADMIN_ID = 5200398952
 OTZIV_CHAT_ID = "@vip_starsgift"  # Buyurtmalar boradigan kanal username yoki IDsi
 # Baza doim bot.py yonida saqlanadi (qaysi papkadan ishga tushirilishidan qat'i nazar)
