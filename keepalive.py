@@ -1,10 +1,19 @@
+"""Render bepul web-servis uchun health-check server.
+
+Render servisga tashqi trafik kelmasa uni uyquga yuboradi. cron-job.org kabi
+xizmat /health manzilini muntazam chaqirib turishi kerak.
+
+PORT muhit o'zgaruvchisi berilmasa ham server 10000-portda ko'tariladi —
+Render aynan shu portni kutadi ("No open ports detected" xatosi shundan).
+"""
+
 import logging
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DEFAULT_PORT = 10000
- 
+
 
 class _Handler(BaseHTTPRequestHandler):
     def _ok(self):
