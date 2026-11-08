@@ -32,8 +32,8 @@ from aiogram.types import (
  
 # ================== SOZLAMALAR ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Token: BOT_TOKEN muhit o'zgaruvchisidan olinadi. Bo'lmasa, quyidagi qatorga YANGI tokenni yozing.
-BOT_TOKEN = os.getenv("8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM", "8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM")
+# Bot tokeni saqlangan; Render'da BOT_TOKEN Environment Variable bo'lsa, o'sha ishlatiladi.
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM").strip()
 # IKKI ADMIN: bu yerga ikkala adminning Telegram raqamli ID sini yozing.
 ADMIN_ID_1 = 7676544759
 ADMIN_ID_2 = 5200398952  # Ikkinchi admin ID sini almashtiring
@@ -593,24 +593,27 @@ async def get_lang(uid: int) -> str:
 
 
 async def add_user(user, ref: int | None = None):
+    """Foydalanuvchini parallel update'larda ham takroriy ID xatosisiz qo'shadi."""
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT 1 FROM users WHERE id=?", (user.id,))
-        exists = await cur.fetchone()
-        if not exists:
-            ref_ok = None
-            if ref and ref != user.id:
-                c2 = await db.execute("SELECT 1 FROM users WHERE id=?", (ref,))
-                if await c2.fetchone():
-                    ref_ok = ref
-            await db.execute(
-                "INSERT INTO users(id, username, full_name, referrer_id, joined_at) VALUES(?,?,?,?,?)",
-                (user.id, user.username, user.full_name, ref_ok, int(time.time())),
-            )
-        else:
-            await db.execute(
-                "UPDATE users SET username=?, full_name=? WHERE id=?",
-                (user.username, user.full_name, user.id),
-            )
+        # Parallel /start va middleware so'rovlarini navbatga qo'yamiz.
+        await db.execute("BEGIN IMMEDIATE")
+        ref_ok = None
+        if ref and ref != user.id:
+            c2 = await db.execute("SELECT 1 FROM users WHERE id=?", (ref,))
+            if await c2.fetchone():
+                ref_ok = ref
+
+        # Bir xil users.id qayta kelsa, SQLite xato bermaydi.
+        await db.execute(
+            "INSERT OR IGNORE INTO users(id, username, full_name, referrer_id, joined_at) "
+            "VALUES(?,?,?,?,?)",
+            (user.id, user.username, user.full_name, ref_ok, int(time.time())),
+        )
+        # Profil yangilanadi, avvalgi referrer_id esa saqlanib qoladi.
+        await db.execute(
+            "UPDATE users SET username=?, full_name=? WHERE id=?",
+            (user.username, user.full_name, user.id),
+        )
         await db.commit()
 
 
@@ -1405,6 +1408,8 @@ async def confirm_ban_user(m: Message, state: FSMContext):
         return await m.answer("⚠️ Faqat raqamdan iborat foydalanuvchi ID sini yuboring:")
 
     target_id = int(m.text)
+    if is_admin(target_id):
+        return await m.answer("❌ Adminlarni bloklash mumkin emas. Boshqa foydalanuvchi ID sini yuboring.")
     await state.clear()
 
     kb = InlineKeyboardMarkup(
@@ -1421,6 +1426,8 @@ async def execute_ban(c: CallbackQuery):
     if not is_admin(c.from_user.id):
         return await c.answer("❌ Ruxsat yo'q", show_alert=True)
     target_id = int(c.data.replace("do_ban_", ""))
+    if is_admin(target_id):
+        return await c.answer("❌ Adminlarni bloklash mumkin emas!", show_alert=True)
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE users SET is_banned=1 WHERE id=?", (target_id,))
