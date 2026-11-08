@@ -33,7 +33,7 @@ from aiogram.types import (
 # ================== SOZLAMALAR ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Token: BOT_TOKEN muhit o'zgaruvchisidan olinadi. Bo'lmasa, quyidagi qatorga YANGI tokenni yozing.
-BOT_TOKEN = os.getenv("8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM", "8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8603889269:AAEtqCnD-ozPK7eZAMHWt0JwmQgxg_6BTvM").strip()
 # IKKI ADMIN: bu yerga ikkala adminning Telegram raqamli ID sini yozing.
 ADMIN_ID_1 = 7676544759
 ADMIN_ID_2 = 5200398952  # Ikkinchi admin ID sini almashtiring
@@ -405,6 +405,7 @@ class States(StatesGroup):
     task_reward = State()
     task_photo = State()
     task_description = State()
+    waiting_ref_reward = State()
 
 
 # ================== YORDAMCHI ==================
@@ -441,6 +442,7 @@ async def init_db():
                 stars INTEGER DEFAULT 0,
                 referrer_id INTEGER,
                 rewarded INTEGER DEFAULT 0,
+                reward_amount INTEGER DEFAULT 0,
                 is_banned INTEGER DEFAULT 0,
                 lang TEXT DEFAULT 'uz',
                 joined_at INTEGER
@@ -512,6 +514,10 @@ async def init_db():
                 active INTEGER DEFAULT 1,
                 created_at INTEGER
             );
+            CREATE TABLE IF NOT EXISTS bot_settings(
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS task_submissions(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id INTEGER NOT NULL,
@@ -527,6 +533,7 @@ async def init_db():
         for ddl in (
             "ALTER TABLE scheduled ADD COLUMN source_chat_id INTEGER",
             "ALTER TABLE users ADD COLUMN stars INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN reward_amount INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'uz'",
             "ALTER TABLE users ADD COLUMN joined_at INTEGER",
             "ALTER TABLE users ADD COLUMN blocked INTEGER DEFAULT 0",
@@ -556,6 +563,21 @@ async def init_db():
                 "INSERT OR IGNORE INTO channels(username, title) VALUES(?, ?)",
                 [("@Luckasuzb", "📢 Luckasuzb"), ("@vip_starsgift", "📢 VIP Stars Gift")],
             )
+        await db.execute("INSERT OR IGNORE INTO bot_settings(key, value) VALUES('ref_reward', ?)", (str(REF_REWARD),))
+        await db.commit()
+
+
+async def get_ref_reward() -> int:
+    row = await safe_fetchone("SELECT value FROM bot_settings WHERE key='ref_reward'")
+    try:
+        return max(0, int(row[0])) if row else REF_REWARD
+    except (TypeError, ValueError):
+        return REF_REWARD
+
+
+async def set_ref_reward(value: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT INTO bot_settings(key, value) VALUES('ref_reward', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(value),))
         await db.commit()
 
 
@@ -620,6 +642,13 @@ async def get_user_data(uid: int) -> tuple[int, int]:
 
 
 def main_kb(uid: int, lang: str) -> ReplyKeyboardMarkup:
+    # Adminlar uchun foydalanuvchi menyusi butunlay yashiriladi.
+    if is_admin(uid):
+        return ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="🛠 Admin panel")]],
+            resize_keyboard=True,
+            is_persistent=True,
+        )
     b = lambda k: KeyboardButton(text=btn(lang, k))  # noqa: E731
     rows = [
         [b("stars"), b("withdraw")],
@@ -631,8 +660,6 @@ def main_kb(uid: int, lang: str) -> ReplyKeyboardMarkup:
         [b("tasks"), b("info")],
         [b("lang")],
     ]
-    if is_admin(uid):
-        rows.append([b("admin")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
@@ -689,20 +716,22 @@ async def try_reward_referrer(bot: Bot, uid: int, already_checked: bool = False)
             return True
         if left_at is not None and now - left_at > RETURN_WINDOW:
             return False  # muddat o'tib ketgan
+        reward_amount = await get_ref_reward()
         cur = await db.execute(
-            "UPDATE users SET rewarded=1, left_at=NULL WHERE id=? AND rewarded=0", (uid,)
+            "UPDATE users SET rewarded=1, reward_amount=?, left_at=NULL WHERE id=? AND rewarded=0",
+            (reward_amount, uid)
         )
         if cur.rowcount == 0:
             await db.commit()
             return True
-        await db.execute("UPDATE users SET stars = stars + ? WHERE id=?", (REF_REWARD, referrer_id))
+        await db.execute("UPDATE users SET stars = stars + ? WHERE id=?", (reward_amount, referrer_id))
         await db.commit()
 
     try:
         ref_lang = await get_lang(referrer_id)
         await bot.send_message(
             referrer_id,
-            tr(ref_lang, "ref_notify", name=html.escape(full_name or "user"), reward=REF_REWARD),
+            tr(ref_lang, "ref_notify", name=html.escape(full_name or "user"), reward=reward_amount),
         )
     except Exception:
         pass
@@ -713,11 +742,11 @@ async def mark_left(uid: int):
     """Do'st kanaldan chiqib ketdi: hisobdan chiqariladi, muddat ichida qaytsa yana qo'shiladi."""
     now = int(time.time())
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT referrer_id, ref_new FROM users WHERE id=? AND rewarded=1", (uid,))
+        cur = await db.execute("SELECT referrer_id, ref_new, reward_amount FROM users WHERE id=? AND rewarded=1", (uid,))
         row = await cur.fetchone()
         if not row:
             return
-        referrer_id, ref_new = row
+        referrer_id, ref_new, reward_amount = row
         # Eski (ref_new=0) lar qaytib kela olmaydi: left_at=1 => muddati o'tgan
         cur = await db.execute(
             "UPDATE users SET rewarded=0, left_at=? WHERE id=? AND rewarded=1",
@@ -725,7 +754,7 @@ async def mark_left(uid: int):
         )
         if cur.rowcount and ref_new == 1 and referrer_id:
             await db.execute(
-                "UPDATE users SET stars = MAX(stars - ?, 0) WHERE id=?", (REF_REWARD, referrer_id)
+                "UPDATE users SET stars = MAX(stars - ?, 0) WHERE id=?", (reward_amount or 0, referrer_id)
             )
         await db.commit()
 
@@ -789,9 +818,13 @@ async def start(m: Message, command: CommandObject, state: FSMContext):
     lang = await get_lang(m.from_user.id)
     missing = [] if is_admin(m.from_user.id) else await get_missing(m.bot, m.from_user.id)
     if not missing:
-        await m.answer(tr(lang, "welcome"), reply_markup=main_kb(m.from_user.id, lang))
-        await record_joins(m.from_user.id)
-        await try_reward_referrer(m.bot, m.from_user.id, already_checked=True)
+        if is_admin(m.from_user.id):
+            await m.answer("🛡 <b>Admin rejimi yoqildi.</b> Foydalanuvchi menyusi adminlar uchun o'chirilgan.", reply_markup=main_kb(m.from_user.id, lang))
+            await m.answer("🛠 <b>Doimiy admin panel</b>", reply_markup=admin_kb())
+        else:
+            await m.answer(tr(lang, "welcome"), reply_markup=main_kb(m.from_user.id, lang))
+            await record_joins(m.from_user.id)
+            await try_reward_referrer(m.bot, m.from_user.id, already_checked=True)
     else:
         await m.answer(sub_text(missing, lang), reply_markup=sub_kb(missing, lang))
 
@@ -806,10 +839,14 @@ async def check(c: CallbackQuery):
             await c.message.delete()
         except Exception:
             pass
-        await c.message.answer(tr(lang, "main_menu"), reply_markup=main_kb(c.from_user.id, lang))
+        if is_admin(c.from_user.id):
+            await c.message.answer("🛡 <b>Admin rejimi yoqildi.</b>", reply_markup=main_kb(c.from_user.id, lang))
+            await c.message.answer("🛠 <b>Doimiy admin panel</b>", reply_markup=admin_kb())
+        else:
+            await c.message.answer(tr(lang, "main_menu"), reply_markup=main_kb(c.from_user.id, lang))
+            await record_joins(c.from_user.id)
+            await try_reward_referrer(c.bot, c.from_user.id, already_checked=True)
         await c.answer()
-        await record_joins(c.from_user.id)
-        await try_reward_referrer(c.bot, c.from_user.id, already_checked=True)
     else:
         await c.answer(tr(lang, "sub_not_all"), show_alert=True)
 
@@ -825,7 +862,11 @@ async def set_language(c: CallbackQuery):
         await c.message.delete()
     except Exception:
         pass
-    await c.message.answer(tr(new_lang, "lang_set"), reply_markup=main_kb(c.from_user.id, new_lang))
+    if is_admin(c.from_user.id):
+        await c.message.answer("🛡 <b>Admin rejimi faol.</b>", reply_markup=main_kb(c.from_user.id, new_lang))
+        await c.message.answer("🛠 <b>Admin panel</b>", reply_markup=admin_kb())
+    else:
+        await c.message.answer(tr(new_lang, "lang_set"), reply_markup=main_kb(c.from_user.id, new_lang))
     await c.answer()
 
 
@@ -885,7 +926,7 @@ async def show_referrals(m: Message, uid: int, lang: str):
         lines.append(tr(lang, "ref_line", i=i, label=label, rid=rid, status=tr(lang, status_key)))
 
     await m.answer(
-        tr(lang, "ref_text", link=link, total=len(invited), active=ok_n, reward=REF_REWARD)
+        tr(lang, "ref_text", link=link, total=len(invited), active=ok_n, reward=await get_ref_reward())
     )
     if lines:
         await m.answer(tr(lang, "ref_list_title"))
@@ -900,6 +941,14 @@ async def menu(m: Message, state: FSMContext):
     key = BTN_REV[m.text]
     uid = m.from_user.id
     lang = await get_lang(uid)
+
+    if is_admin(uid):
+        if key == "admin":
+            await m.answer("🛠 <b>Admin panel</b>", reply_markup=admin_kb())
+        else:
+            await m.answer("🛡 Admin hisobida foydalanuvchi bo'limlari yopiq.", reply_markup=main_kb(uid, lang))
+            await m.answer("🛠 <b>Admin panel</b>", reply_markup=admin_kb())
+        return
 
     if key == "stars":
         kb = InlineKeyboardMarkup(
@@ -956,7 +1005,7 @@ async def menu(m: Message, state: FSMContext):
         await m.answer(tr(lang, "topup_info", card=CARD_INFO), reply_markup=kb)
 
     elif key == "guide":
-        await m.answer(tr(lang, "guide", reward=REF_REWARD))
+        await m.answer(tr(lang, "guide", reward=await get_ref_reward()))
 
     elif key == "support":
         await state.set_state(States.waiting_support)
@@ -1012,8 +1061,56 @@ def admin_kb() -> InlineKeyboardMarkup:
             [b("⭐️ Stars qo'shish", "admin_st_plus_menu"), b("📉 Stars ayirish", "admin_st_minus_menu")],
             [b("➕ Kanal qo'shish", "add_ch"), b("🗑 Kanalni o'chirish", "del_ch_menu")],
             [b("📝 Vazifa yaratish", "task_create"), b("📋 Vazifalar", "task_admin_list")],
+            [b("⚙️ Bot sozlamalari", "admin_settings"), b("🔄 Panelni yangilash", "admin_panel_refresh")],
         ]
     )
+
+
+@router.callback_query(F.data == "admin_panel_refresh")
+async def admin_panel_refresh(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    await c.answer("Panel yangilandi")
+    try:
+        await c.message.edit_reply_markup(reply_markup=admin_kb())
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(F.data == "admin_settings")
+async def admin_settings(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    reward = await get_ref_reward()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐️ Referal mukofotini o'zgartirish", callback_data="admin_set_ref_reward")],
+        [InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_panel_refresh")],
+    ])
+    await c.message.answer(f"⚙️ <b>Bot sozlamalari</b>\n\nHozirgi referal mukofoti: <b>{reward} Stars</b>", reply_markup=kb)
+    await c.answer()
+
+
+@router.callback_query(F.data == "admin_set_ref_reward")
+async def admin_set_ref_reward(c: CallbackQuery, state: FSMContext):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    await state.set_state(States.waiting_ref_reward)
+    await c.message.answer("⭐️ Har bir tasdiqlangan referal uchun beriladigan Stars miqdorini yuboring (0–100000).")
+    await c.answer()
+
+
+@router.message(States.waiting_ref_reward, F.text)
+async def save_ref_reward(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        await state.clear()
+        return
+    value = parse_int(m.text)
+    if value is None or value > 100000:
+        return await m.answer("❌ 0 dan 100000 gacha butun son kiriting.")
+    await set_ref_reward(value)
+    await state.clear()
+    await m.answer(f"✅ Referal mukofoti saqlandi: <b>{value} Stars</b>", reply_markup=main_kb(m.from_user.id, await get_lang(m.from_user.id)))
+    await m.answer("🛠 <b>Admin panel</b>", reply_markup=admin_kb())
 
 
 # ================== SON (KANALLAR STATISTIKASI) ==================
@@ -3109,8 +3206,7 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     if ":" not in BOT_TOKEN:
         raise SystemExit(
-            "❌ BOT_TOKEN to'g'ri emas! Faylning tepasida BOT_TOKEN = \"...\" qatoriga "
-            "@BotFather bergan haqiqiy (yangi) tokenni yozing (yoki BOT_TOKEN muhit o'zgaruvchisini o'rnating)."
+            "❌ BOT_TOKEN topilmadi! Hosting Environment Variables bo'limida BOT_TOKEN nomli o'zgaruvchi yarating va BotFather tokenini kiriting."
         )
     await init_db()
     logging.info("Baza fayli: %s", DB_PATH)
