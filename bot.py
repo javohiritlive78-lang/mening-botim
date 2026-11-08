@@ -77,6 +77,8 @@ DB_PATH = os.getenv("DB_PATH") or os.path.join(BASE_DIR, "bot.db")
 
 REF_REWARD = 2  # Taklif qilingan do'st kanallarga obuna bo'lsa beriladigan stars
 RETURN_WINDOW = 72 * 3600  # chiqib ketgan do'st qaytishi uchun vaqt (72 soat)
+# ---- Xaftalik musobaqa davomiyligi (tugagach admin tasdiqlaydi, avtomatik stars berilmaydi) ----
+WEEKLY_DURATION = 7 * 24 * 3600
 
 # ---- Slot (Open) sozlamalari ----
 SPIN_COST = 2  # bitta aylantirish narxi (Telegram hisobidan to'lanadigan stars)
@@ -153,6 +155,7 @@ T = {
         "ref_left": "⚠️ chiqib ketgan (24 soatda qaytsa hisoblanadi)",
         "ref_expired": "🚫 24 soatda qaytmagan (hisoblanmaydi)",
         "ref_summary": "📊 <b>Natija:</b> ✅ {ok} ta obuna | ⏳ {wait} ta kutilmoqda | ⚠️ {left} ta chiqib ketgan",
+        "ref_weekly_btn": "🏆 Haftalik musobaqa",
         "ref_notify": (
             "🎉 Siz taklif qilgan <b>{name}</b> kanallarga obuna bo'ldi!\n"
             "⭐️ Hisobingizga <b>{reward} ta Stars</b> qo'shildi!"
@@ -265,6 +268,7 @@ T = {
         "ref_left": "⚠️ отписался (вернётся за 24 ч — засчитается)",
         "ref_expired": "🚫 не вернулся за 24 часа (не учитывается)",
         "ref_summary": "📊 <b>Итог:</b> ✅ {ok} подписаны | ⏳ {wait} ожидают | ⚠️ {left} отписались",
+        "ref_weekly_btn": "🏆 Еженедельный конкурс",
         "ref_notify": (
             "🎉 Приглашённый вами <b>{name}</b> подписался на каналы!\n"
             "⭐️ На ваш счёт зачислено <b>{reward} Stars</b>!"
@@ -712,8 +716,8 @@ async def try_reward_referrer(bot: Bot, uid: int, already_checked: bool = False)
         await db.execute("UPDATE users SET stars = stars + ? WHERE id=?", (REF_REWARD, referrer_id))
         await db.commit()
 
+    ref_lang = await get_lang(referrer_id)
     try:
-        ref_lang = await get_lang(referrer_id)
         await bot.send_message(
             referrer_id,
             tr(ref_lang, "ref_notify", name=html.escape(full_name or "user"), reward=REF_REWARD),
@@ -899,7 +903,12 @@ async def show_referrals(m: Message, uid: int, lang: str):
         lines.append(tr(lang, "ref_line", i=i, label=label, rid=rid, status=tr(lang, status_key)))
 
     await m.answer(
-        tr(lang, "ref_text", link=link, total=len(invited), active=ok_n, reward=REF_REWARD)
+        tr(lang, "ref_text", link=link, total=len(invited), active=ok_n, reward=REF_REWARD),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=tr(lang, "ref_weekly_btn"), callback_data="weekly_live")]
+            ]
+        ),
     )
     if lines:
         await m.answer(tr(lang, "ref_list_title"))
@@ -2582,6 +2591,10 @@ async def scheduler_loop(bot: Bot):
                     await notify_admins(bot, f"⏰ <b>Rejalashtirilgan xabar yuborildi!</b> (#{sid})\n\n{report}")
                 except Exception:
                     pass
+
+            wrow = await _weekly_get()
+            if wrow and wrow[4] == 1 and now - int(wrow[0] or 0) >= WEEKLY_DURATION:
+                await _weekly_auto_finish(bot)
         except Exception as e:
             logging.error("scheduler_loop xato: %s", e)
             if "no such table" in str(e):
@@ -3226,16 +3239,18 @@ async def weekly_status_text() -> str:
             "⛔️ Hozircha faol emas.\n\n"
             "Boshlash uchun «▶️ Boshlash» tugmasini bosing."
         )
-    started_at, places, stars, prize_text, _ = row
+    started_at, places, stars, prize_text, active = row
     if places == 1:
         prize = f"1️⃣ o'rin — <b>{stars}</b> ⭐️"
     else:
         prize = html.escape(prize_text or "")
+    head = "🏁 <b>Xaftalik referal — muddat tugadi</b>" if active == 2 else "🏆 <b>Xaftalik referal — FAOL</b>"
+    tail = "\n\n👉 Stars berish uchun «🏁 Tugatish» → «✅ Tasdiqlash»." if active == 2 else ""
     return (
-        "🏆 <b>Xaftalik referal — FAOL</b>\n\n"
+        head + "\n\n"
         f"⏰ <b>Boshlangan vaqti:</b> {_wfmt(started_at)}\n"
         f"🏅 <b>O'rinlar soni:</b> {places}\n\n"
-        f"🎁 <b>Sovrinlar:</b>\n{prize}"
+        f"🎁 <b>Sovrinlar:</b>\n{prize}" + tail
     )
 
 
@@ -3522,6 +3537,88 @@ async def weekly_cancel(c: CallbackQuery, state: FSMContext):
         "❌ <b>Musobaqa bekor qilindi.</b>\nHech kimga Stars qo'shilmadi.",
         reply_markup=_weekly_kb(False),
     )
+    await c.answer()
+
+
+async def _weekly_auto_finish(bot: Bot):
+    """7 kun o'tgach musobaqani yakunlaydi va adminga natijani yuboradi.
+    Stars faqat admin «✅ Tasdiqlash» bosganda qo'shiladi."""
+    row = await _weekly_get()
+    if not row or row[4] != 1:
+        return
+    started_at, places, _stars, _prize, _ = row
+    if int(time.time()) - int(started_at or 0) < WEEKLY_DURATION:
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE weekly_ref SET active=2 WHERE id=1")
+        await db.commit()
+    top = await _weekly_top(started_at, places)
+    lines = (
+        [_weekly_place_line(i, name, cnt) for i, (_r, cnt, name, _u) in enumerate(top, 1)]
+        if top
+        else ["😔 Hech kim do'st taklif qilmadi."]
+    )
+    for admin in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                admin,
+                "⏰ <b>Haftalik musobaqa muddati tugadi!</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                + "\n".join(lines)
+                + "\n\n👉 Stars berish uchun: 🏆 Xaftalik referal → 🏁 Tugatish → ✅ Tasdiqlash.\n"
+                "Hech kimga avtomatik Stars berilmadi.",
+            )
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data == "weekly_live")
+async def weekly_live(c: CallbackQuery):
+    row = await _weekly_get()
+    if not row or not row[4]:
+        return await c.answer("⛔️ Hozircha faol musobaqa yo'q. Tez orada boshlanadi! 🔥", show_alert=True)
+    started_at, places, stars, prize_text, _ = row
+    left = max(0, WEEKLY_DURATION - (int(time.time()) - int(started_at or 0)))
+    days, rem = divmod(left, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins = rem // 60
+
+    top = await _weekly_top(started_at, 10)
+    lines = (
+        [_weekly_place_line(i, name, cnt) for i, (_rid, cnt, name, _un) in enumerate(top, 1)]
+        if top
+        else ["😴 Hozircha hech kim do'st taklif qilmadi. Birinchi bo'ling! 🚀"]
+    )
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT COUNT(*) FROM users WHERE referrer_id=? AND referrer_id!=0 AND joined_at>=?",
+            (c.from_user.id, started_at),
+        )
+        mine = (await cur.fetchone())[0]
+
+    if places == 1:
+        prize = f"1️⃣ o'rin — <b>{stars}</b> ⭐️"
+    else:
+        prize = html.escape(prize_text or "")
+    time_line = (
+        f"⏳ <b>Qolgan vaqt:</b> {days} kun {hours} soat {mins} daqiqa"
+        if left
+        else "🏁 <b>Muddat tugadi</b> — g'oliblar tasdiqlanmoqda"
+    )
+    text = (
+        "🏆 <b>XAFTALIK REFERAL — JONLI HOLAT</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"{time_line}\n"
+        f"🎁 <b>Sovrin:</b> {prize}\n\n"
+        "📊 <b>TOP 10:</b>\n" + "\n".join(lines) + "\n\n"
+        + (
+            f"📍 <b>Sizning natijangiz:</b> {mine} ta do'st"
+            if mine
+            else "📍 Siz hali qatnashmadingiz — «🗣 Referal» havolasini ulashing!"
+        )
+    )
+    await c.message.answer(text)
     await c.answer()
 
 
