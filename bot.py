@@ -39,7 +39,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Token faqat BOT_TOKEN muhit o'zgaruvchisidan olinadi (Render panelida kiritiladi)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = 7676544759  # asosiy admin (texnik xabarlar shu yerga boradi)
-ADMIN_IDS = {7676544759, 5200398952}  # faqat shu 2 ta ID admin
+ADMIN_IDS = {7676544759}  # faqat shu 2 ta ID admin
 OTZIV_CHAT_ID = "@vip_starsgift"  # Buyurtmalar boradigan kanal username yoki IDsi
 # Baza doim bot.py yonida saqlanadi (qaysi papkadan ishga tushirilishidan qat'i nazar)
 DB_PATH = os.getenv("DB_PATH") or os.path.join(BASE_DIR, "bot.db")
