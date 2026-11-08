@@ -554,7 +554,7 @@ async def init_db():
         if (await cur.fetchone())[0] == 0:
             await db.executemany(
                 "INSERT OR IGNORE INTO channels(username, title) VALUES(?, ?)",
-                [("@Luckasuzb", "📢 Luckasuzb"), ("@vip_starsgift", "📢 VIP Stars Gift")],
+                [("@Gift_stars_uz", "📢 STARS PLANETA"), ("@vip_starsgift", "📢 VIP Stars Gift")],
             )
         await db.commit()
 
