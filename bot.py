@@ -407,6 +407,10 @@ class States(StatesGroup):
     task_reward = State()
     task_photo = State()
     task_description = State()
+    weekly_places = State()
+    weekly_stars = State()
+    weekly_text = State()
+    weekly_award = State()
 
 
 # ================== YORDAMCHI ==================
@@ -522,6 +526,14 @@ async def init_db():
                 proof_text TEXT NOT NULL,
                 status TEXT DEFAULT 'pending',
                 created_at INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS weekly_ref(
+                id INTEGER PRIMARY KEY,
+                started_at INTEGER,
+                places INTEGER DEFAULT 1,
+                stars INTEGER DEFAULT 0,
+                prize_text TEXT,
+                active INTEGER DEFAULT 0
             );
             """
         )
@@ -1014,6 +1026,7 @@ def admin_kb() -> InlineKeyboardMarkup:
             [b("⭐️ Stars qo'shish", "admin_st_plus_menu"), b("📉 Stars ayirish", "admin_st_minus_menu")],
             [b("➕ Kanal qo'shish", "add_ch"), b("🗑 Kanalni o'chirish", "del_ch_menu")],
             [b("📝 Vazifa yaratish", "task_create"), b("📋 Vazifalar", "task_admin_list")],
+            [b("🏆 Xaftalik referal", "weekly_menu")],
         ]
     )
 
@@ -3180,6 +3193,336 @@ async def admin_restore_db(m: Message, state: FSMContext):
         await send_backup(m.bot, "💾 Tiklangan baza zaxirasi")
     except Exception as e:
         logging.error("Tiklangan bazani zaxiralash xato: %s", e)
+
+
+# ================== XAFTALIK REFERAL MUSOBAQASI ==================
+def _wfmt(ts: int) -> str:
+    return datetime.fromtimestamp(ts, TZ).strftime("%d.%m.%Y %H:%M")
+
+
+async def _weekly_get():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT started_at, places, stars, prize_text, active FROM weekly_ref WHERE id=1"
+        )
+        return await cur.fetchone()
+
+
+def _weekly_kb(active: bool) -> InlineKeyboardMarkup:
+    rows = []
+    if active:
+        rows.append([InlineKeyboardButton(text="🏁 Tugatish", callback_data="weekly_finish")])
+        rows.append([InlineKeyboardButton(text="❌ Musobaqani bekor qilish", callback_data="weekly_cancel")])
+    else:
+        rows.append([InlineKeyboardButton(text="▶️ Boshlash", callback_data="weekly_start")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def weekly_status_text() -> str:
+    row = await _weekly_get()
+    if not row or not row[4]:
+        return (
+            "🏆 <b>Xaftalik referal musobaqasi</b>\n\n"
+            "⛔️ Hozircha faol emas.\n\n"
+            "Boshlash uchun «▶️ Boshlash» tugmasini bosing."
+        )
+    started_at, places, stars, prize_text, _ = row
+    if places == 1:
+        prize = f"1️⃣ o'rin — <b>{stars}</b> ⭐️"
+    else:
+        prize = html.escape(prize_text or "")
+    return (
+        "🏆 <b>Xaftalik referal — FAOL</b>\n\n"
+        f"⏰ <b>Boshlangan vaqti:</b> {_wfmt(started_at)}\n"
+        f"🏅 <b>O'rinlar soni:</b> {places}\n\n"
+        f"🎁 <b>Sovrinlar:</b>\n{prize}"
+    )
+
+
+async def _weekly_top(started_at: int, places: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT u.referrer_id, COUNT(*) AS c FROM users u "
+            "WHERE u.referrer_id IS NOT NULL AND u.referrer_id!=0 AND u.joined_at>=? "
+            "GROUP BY u.referrer_id ORDER BY c DESC, u.referrer_id LIMIT ?",
+            (started_at, places),
+        )
+        rows = await cur.fetchall()
+        out = []
+        for rid, cnt in rows:
+            c2 = await db.execute("SELECT full_name, username FROM users WHERE id=?", (rid,))
+            r = await c2.fetchone()
+            out.append((rid, cnt, (r[0] if r and r[0] else "Noma'lum"), (r[1] if r else None)))
+    return out
+
+
+def _weekly_medals(i: int) -> str:
+    return ["🥇", "🥈", "🥉"][i - 1] if i <= 3 else f"{i}."
+
+
+def _weekly_place_line(i: int, name: str, cnt: int) -> str:
+    return f"{_weekly_medals(i)} <b>{html.escape(name)}</b> — <b>{cnt}</b> ta do'st"
+
+
+def _bg_spawn(coro):
+    t = asyncio.create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+
+
+async def _weekly_send_all(bot: Bot, text: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT id FROM users WHERE is_banned=0")
+        ids = [r[0] for r in await cur.fetchall()]
+    ok = 0
+    for i, uid in enumerate(ids, 1):
+        try:
+            await bot.send_message(uid, text)
+            ok += 1
+        except Exception:
+            pass
+        await asyncio.sleep(0.06 if i % 20 else 1)
+    return ok
+
+
+async def _weekly_announce(bot: Bot, text: str, admin_chat: int):
+    try:
+        await bot.send_message(OTZIV_CHAT_ID, text)
+    except Exception as e:
+        logging.warning("Weekly kanal posti xato: %s", e)
+    try:
+        sent = await _weekly_send_all(bot, text)
+        await bot.send_message(admin_chat, f"📬 Barcha foydalanuvchilarga yuborildi: <b>{sent}</b> ta")
+    except Exception as e:
+        logging.error("Weekly tarqatish xato: %s", e)
+
+
+async def _weekly_start(bot: Bot, admin_chat: int, places: int, stars: int, prize_text: str):
+    started_at = int(time.time())
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM weekly_ref")
+        await db.execute(
+            "INSERT INTO weekly_ref(id, started_at, places, stars, prize_text, active) VALUES(1,?,?,?,?,1)",
+            (started_at, places, stars, prize_text),
+        )
+        await db.commit()
+
+    if places == 1:
+        prize = f"1️⃣ o'rin — <b>{stars}</b> ⭐️"
+    else:
+        prize = html.escape(prize_text or "")
+
+    text = (
+        "🎊🏆 <b>XAFTALIK REFERAL BOSHLANDI!</b> 🏆🎊\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎁 <b>Sovrinlar:</b>\n{prize}\n\n"
+        f"⏰ <b>Boshlangan vaqti:</b> {_wfmt(started_at)}\n"
+        f"🏅 <b>O'rinlar soni:</b> {places}\n\n"
+        "🔥 <b>Qanday qatnashish?</b>\n"
+        "🗣 «Referal» bo'limidan havolangizni oling va do'stlaringizni taklif qiling.\n"
+        "⚡️ Har bir yangi do'st hisobga olinadi!\n\n"
+        "🍀 Omad tilaymiz!"
+    )
+    await bot.send_message(admin_chat, "✅ <b>Musobaqa boshlandi!</b>\n\n" + text, reply_markup=_weekly_kb(True))
+    _bg_spawn(_weekly_announce(bot, text, admin_chat))
+
+
+@router.callback_query(F.data == "weekly_menu")
+async def weekly_menu(c: CallbackQuery, state: FSMContext):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    await state.clear()
+    row = await _weekly_get()
+    await c.message.answer(await weekly_status_text(), reply_markup=_weekly_kb(bool(row and row[4])))
+    await c.answer()
+
+
+@router.callback_query(F.data == "weekly_start")
+async def weekly_start(c: CallbackQuery, state: FSMContext):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    row = await _weekly_get()
+    if row and row[4]:
+        return await c.answer("⚠️ Musobaqa allaqachon faol. Avval tugating.", show_alert=True)
+    await state.set_state(States.weekly_places)
+    await c.message.answer(
+        "🏆 <b>Xaftalik referal</b>\n\n"
+        "🏅 Nechta o'rin bo'lsin? Raqam yozing (1, 2, 3 ... 20).\n"
+        "Bekor qilish uchun /start bosing."
+    )
+    await c.answer()
+
+
+@router.message(States.weekly_places)
+async def weekly_places(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
+    txt = (m.text or "").strip()
+    if not txt.isdigit() or not (1 <= int(txt) <= 20):
+        return await m.answer("❌ 1 dan 20 gacha raqam yozing.")
+    places = int(txt)
+    await state.update_data(weekly_places=places)
+    if places == 1:
+        await state.set_state(States.weekly_stars)
+        await m.answer("⭐️ 1-o'rin uchun nechta Stars bo'lsin? Raqam yozing (masalan 10).")
+    else:
+        await state.set_state(States.weekly_text)
+        await m.answer(
+            "📝 Sovrinlar matnini yozing, masalan:\n"
+            "<code>1-o'rin — 30⭐️, 2-o'rin — 15⭐️, 3-o'rin — 5⭐️</code>\n\n"
+            "Bu matn kanalga va hamma foydalanuvchilarga yuboriladi."
+        )
+
+
+@router.message(States.weekly_stars)
+async def weekly_stars(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
+    txt = (m.text or "").strip()
+    if not txt.isdigit() or int(txt) <= 0:
+        return await m.answer("❌ Musbat raqam yozing (masalan 10).")
+    data = await state.get_data()
+    places = int(data.get("weekly_places", 1))
+    await state.clear()
+    await _weekly_start(m.bot, m.chat.id, places, int(txt), "")
+
+
+@router.message(States.weekly_text)
+async def weekly_text(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
+    text = (m.text or "").strip()
+    if len(text) < 3:
+        return await m.answer("❌ Sovrinlar matnini yozing.")
+    data = await state.get_data()
+    places = int(data.get("weekly_places", 2))
+    await state.clear()
+    await _weekly_start(m.bot, m.chat.id, places, 0, text)
+
+
+@router.callback_query(F.data == "weekly_finish")
+async def weekly_finish(c: CallbackQuery, state: FSMContext):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    row = await _weekly_get()
+    if not row or not row[4]:
+        return await c.answer("⛔️ Faol musobaqa yo'q", show_alert=True)
+    started_at, places, stars, prize_text, _ = row
+    top = await _weekly_top(started_at, places)
+    if not top:
+        return await c.message.answer(
+            "😔 Musobaqa boshlanganidan beri hech kim do'st taklif qilmadi.\n"
+            "Davom ettirish uchun hech narsa qilmang, bekor qilish uchun «❌ Musobaqani bekor qilish».",
+            reply_markup=_weekly_kb(True),
+        )
+    lines = [_weekly_place_line(i, name, cnt) for i, (_rid, cnt, name, _un) in enumerate(top, 1)]
+    text = (
+        "🏁 <b>XAFTALIK REFERAL — NATIJALAR</b>\n"
+        f"⏰ {_wfmt(started_at)} dan buyon\n\n" + "\n".join(lines)
+    )
+    if places == 1 and stars:
+        text += f"\n\n🎁 G'olibga <b>{stars}</b> ⭐️ qo'shiladi."
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Tasdiqlash", callback_data="weekly_confirm")],
+            [InlineKeyboardButton(text="❌ Musobaqani bekor qilish", callback_data="weekly_cancel")],
+        ]
+    )
+    await state.update_data(weekly_top=[(rid, cnt, name) for rid, cnt, name, _u in top])
+    await c.message.answer(text, reply_markup=kb)
+    await c.answer()
+
+
+async def _weekly_award(bot: Bot, admin_chat: int, stars: int):
+    row = await _weekly_get()
+    if not row or not row[4]:
+        return await bot.send_message(admin_chat, "⛔️ Faol musobaqa yo'q.")
+    started_at, places, _stars, prize_text, _ = row
+    top = await _weekly_top(started_at, places)
+    if not top:
+        return await bot.send_message(admin_chat, "😔 G'olib topilmadi.")
+
+    winner_id, winner_cnt, winner_name, winner_un = top[0]
+    if stars > 0:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("UPDATE users SET stars = stars + ? WHERE id=?", (stars, winner_id))
+            await db.execute("UPDATE weekly_ref SET active=0 WHERE id=1")
+            await db.commit()
+    else:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("UPDATE weekly_ref SET active=0 WHERE id=1")
+            await db.commit()
+
+    lines = [_weekly_place_line(i, name, cnt) for i, (_rid, cnt, name, _un) in enumerate(top, 1)]
+    announce = (
+        "🎊🏆 <b>XAFTALIK REFERAL YAKUNLANDI!</b> 🏆🎊\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        + "\n".join(lines) +
+        "\n\n"
+    )
+    if stars > 0:
+        announce += f"🥇 <b>G'olib:</b> {html.escape(winner_name)}\n🎁 <b>{stars}</b> ⭐️ hisobiga qo'shildi!\n\n"
+    announce += "🎉 G'oliblarni tabriklaymiz! Yangi musobaqa tez orada! 🔥"
+
+    try:
+        await bot.send_message(
+            winner_id,
+            f"🎉🏆 <b>Tabriklaymiz!</b>\n\n"
+            f"Xaftalik referal musobaqasida <b>{winner_cnt}</b> ta do'st taklif qilib "
+            f"1️⃣ o'rinni egalladingiz!\n\n"
+            + (f"🎁 Hisobingizga <b>{stars}</b> ⭐️ qo'shildi!" if stars > 0 else "🎁 Sovringiz tez orada beriladi."),
+        )
+    except Exception:
+        pass
+
+    await bot.send_message(admin_chat, "✅ <b>Tasdiqlandi!</b>\n\n" + announce)
+    _bg_spawn(_weekly_announce(bot, announce, admin_chat))
+
+
+@router.callback_query(F.data == "weekly_confirm")
+async def weekly_confirm(c: CallbackQuery, state: FSMContext):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    row = await _weekly_get()
+    if not row or not row[4]:
+        return await c.answer("⛔️ Faol musobaqa yo'q", show_alert=True)
+    _started, _places, stars, _prize, _ = row
+    await c.answer()
+    if stars and stars > 0:
+        await state.clear()
+        await _weekly_award(c.bot, c.from_user.id, stars)
+    else:
+        await state.set_state(States.weekly_award)
+        await c.message.answer(
+            "⭐️ 1-o'rin g'olibiga nechta Stars qo'shamiz?\n"
+            "Raqam yozing (0 — stars qo'shmaslik)."
+        )
+
+
+@router.message(States.weekly_award)
+async def weekly_award_msg(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return
+    txt = (m.text or "").strip()
+    if not txt.isdigit():
+        return await m.answer("❌ Raqam yozing (0, 10, 20 ...).")
+    await state.clear()
+    await _weekly_award(m.bot, m.chat.id, int(txt))
+
+
+@router.callback_query(F.data == "weekly_cancel")
+async def weekly_cancel(c: CallbackQuery, state: FSMContext):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE weekly_ref SET active=0 WHERE id=1")
+        await db.commit()
+    await state.clear()
+    await c.message.answer(
+        "❌ <b>Musobaqa bekor qilindi.</b>\nHech kimga Stars qo'shilmadi.",
+        reply_markup=_weekly_kb(False),
+    )
+    await c.answer()
 
 
 # ================== MAIN (ISHGA TUSHIRISH) ==================
