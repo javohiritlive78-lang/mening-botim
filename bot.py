@@ -1036,6 +1036,7 @@ def admin_kb() -> InlineKeyboardMarkup:
             [b("➕ Kanal qo'shish", "add_ch"), b("🗑 Kanalni o'chirish", "del_ch_menu")],
             [b("📝 Vazifa yaratish", "task_create"), b("📋 Vazifalar", "task_admin_list")],
             [b("🏆 Xaftalik referal", "weekly_menu")],
+            [b("📣 Kanalga reklama posti", "promo_post")],
         ]
     )
 
@@ -3619,6 +3620,183 @@ async def weekly_live(c: CallbackQuery):
         )
     )
     await c.message.answer(text)
+    await c.answer()
+
+
+# ================== ADMIN: TAYYOR REKLAMA POSTLARI ==================
+PROMO_POSTS = [
+    (
+        "🔥 <b>Telegram Stars — eng qulay narxda!</b> ⭐️\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "{packs}\n\n"
+        "⚡️ To'lov 1 daqiqada\n"
+        "🔒 Xavfsiz va ishonchli\n"
+        "🕐 24/7 avtomatik\n\n"
+        "👇 Hoziroq sinab ko'ring:\n{link}"
+    ),
+    (
+        "🎁 <b>Stars'ingizni sovg'aga aylantiring!</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "💎 Sotib olgan yulduzlaringizni sevimli insonlaringizga gift qilib yuboring\n"
+        "🚀 Yechish 1–2 daqiqada — ortiqcha ovoragarchiliksiz\n\n"
+        "🎯 Boshlash uchun botga kiring:\n{link}"
+    ),
+    (
+        "🗣 <b>Do'stingizni taklif qiling — Stars oling!</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "🎁 Har bir yangi do'stingiz uchun <b>2 ⭐️</b>\n"
+        "👥 10 do'st = <b>20 ⭐️</b>\n"
+        "🏆 Eng faol 10 kishi TOP reytingda\n\n"
+        "📎 Havolangizni «🗣 Referal» bo'limida oling:\n{link}"
+    ),
+    (
+        "⚡️ <b>1 daqiqada Stars — uydan chiqmasdan!</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "🚀 Karta orqali to'lov qiling\n"
+        "⭐️ Stars bir zumda hisobingizda\n"
+        "🎁 Xohlagan paytda gift qilib yeching\n\n"
+        "🕐 Bot kunu tun ishlaydi — 24/7\n\n"
+        "👇 Boshlash:\n{link}"
+    ),
+    (
+        "🎰 <b>Omadingizni sinab ko'ring — 777!</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "🎲 Har bir aylantirish faqat <b>2 ⭐️</b>\n"
+        "💥 777 tushsa — <b>5 ⭐️</b> yutuq\n"
+        "🔥 Har 4-aylantirishda omad yoningizda\n\n"
+        "👇 Bugun omadni sinang:\n{link}"
+    ),
+    (
+        "📚 <b>Qanday ishlaydi? 3 qadam:</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Botga kiring\n"
+        "2️⃣ «💰 Hisob to'ldirish» orqali chek yuboring\n"
+        "3️⃣ Stars sotib oling yoki gift qilib yeching\n\n"
+        "✅ Hammasi oddiy va tushunarli\n\n"
+        "👇 Hoziroq boshlang:\n{link}"
+    ),
+    (
+        "💎 <b>Nega bizni tanlashadi?</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "✅ Eng past narxlar\n"
+        "⚡️ Tezkor avtomatik yetkazish\n"
+        "🎁 Gift yechish imkoniyati\n"
+        "🗣 Har do'st uchun <b>2 ⭐️</b>\n"
+        "🛡 Ishonchli va shaffof\n\n"
+        "👇 Bizga qo'shiling:\n{link}"
+    ),
+    (
+        "⭐️ <b>Stars kerakmi? Bizda bor!</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "{packs}\n\n"
+        "💳 Karta orqali to'lov\n"
+        "🚀 1 daqiqada yetkazib beramiz\n"
+        "🎁 Yoki darhol gift qilib oling\n\n"
+        "👇 Mana shu yerda:\n{link}"
+    ),
+    (
+        "🏆 <b>Haftalik referal musobaqasi!</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "🎁 Sovrinlar har hafta\n"
+        "🥇 Eng ko'p do'st taklif qilgan g'olib\n"
+        "📊 Jonli jadvalni botda kuzatib boring\n\n"
+        "🗣 Havolangizni oling va do'stlaringizni chaqiring:\n{link}"
+    ),
+    (
+        "🔥 <b>Gift olishning eng oson yo'li</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "💎 Narxlar hamyonbop\n"
+        "🎁 Yechish — bir necha daqiqada\n"
+        "👥 Do'st chaqirsangiz — yana bonus\n\n"
+        "👇 Bir marta sinab ko'ring, o'zingiz ko'rasiz:\n{link}"
+    ),
+]
+
+_last_promo = -1
+_promo_pending: dict[int, str] = {}
+
+
+def _pick_promo(link: str) -> str:
+    global _last_promo
+    packs = "\n".join(f"⭐️ {n} ta — <b>{p:,} so'm</b>" for n, p in PACKS.items())
+    idx = random.randrange(len(PROMO_POSTS))
+    if len(PROMO_POSTS) > 1 and idx == _last_promo:
+        idx = (idx + 1) % len(PROMO_POSTS)
+    _last_promo = idx
+    return PROMO_POSTS[idx].replace("{packs}", packs).replace("{link}", link)
+
+
+@router.callback_query(F.data.in_({"promo_post", "promo_post_new"}))
+async def promo_post(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    me = await c.bot.get_me()
+    text = _pick_promo(f"https://t.me/{me.username}")
+    _promo_pending[c.from_user.id] = text
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Kanalga yuborish", callback_data="promo_post_send")],
+            [InlineKeyboardButton(text="👥 Hammaga yuborish", callback_data="promo_post_all")],
+            [
+                InlineKeyboardButton(text="🔁 Boshqa matn", callback_data="promo_post_new"),
+                InlineKeyboardButton(text="❌ Yopish", callback_data="promo_post_close"),
+            ],
+        ]
+    )
+    if c.data == "promo_post_new":
+        try:
+            await c.message.edit_text(text, reply_markup=kb)
+        except TelegramBadRequest:
+            await c.message.answer(text, reply_markup=kb)
+    else:
+        await c.message.answer(text, reply_markup=kb)
+    await c.answer()
+
+
+@router.callback_query(F.data == "promo_post_send")
+async def promo_post_send(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    text = _promo_pending.get(c.from_user.id)
+    if not text:
+        return await c.answer("Matn topilmadi — «📣» tugmasini qaytadan bosing", show_alert=True)
+    try:
+        await c.bot.send_message(OTZIV_CHAT_ID, text)
+    except Exception as e:
+        logging.error("Promo post xato: %s", e)
+        return await c.answer("❌ Kanalga yuborilmadi — bot kanalda admin ekanini tekshiring", show_alert=True)
+    await c.answer("✅ Kanalga yuborildi!")
+    await c.message.answer(f"✅ <b>{html.escape(str(OTZIV_CHAT_ID))}</b> kanaliga yuborildi.")
+
+
+async def _promo_broadcast(bot: Bot, text: str, admin_chat: int):
+    sent = await _weekly_send_all(bot, text)
+    try:
+        await bot.send_message(admin_chat, f"📬 <b>Hammaga yuborildi:</b> {sent} ta")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "promo_post_all")
+async def promo_post_all(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    text = _promo_pending.get(c.from_user.id)
+    if not text:
+        return await c.answer("Matn topilmadi — «📣» tugmasini qaytadan bosing", show_alert=True)
+    await c.answer("⏳ Yuborilmoqda...")
+    _bg_spawn(_promo_broadcast(c.bot, text, c.from_user.id))
+    await c.message.answer("🚀 <b>Hammaga yuborish boshlandi.</b>\nTugagach natija keladi.")
+
+
+@router.callback_query(F.data == "promo_post_close")
+async def promo_post_close(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        return await c.answer("❌ Ruxsat yo'q", show_alert=True)
+    try:
+        await c.message.delete()
+    except Exception:
+        pass
     await c.answer()
 
 
