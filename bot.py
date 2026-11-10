@@ -38,7 +38,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 # IKKI ADMIN: bu yerga ikkala adminning Telegram raqamli ID sini yozing.
 ADMIN_ID_1 = 7676544759
-ADMIN_ID_2 = 5200398952  # Ikkinchi admin ID sini almashtiring
+  # Ikkinchi admin ID sini almashtiring
 ADMIN_IDS = (ADMIN_ID_1, ADMIN_ID_2)
 # Eski koddagi ADMIN_ID murojaatlari uchun moslik; ruxsat tekshiruvida ishlatilmaydi.
 ADMIN_ID = ADMIN_ID_1
