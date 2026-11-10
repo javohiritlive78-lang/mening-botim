@@ -31,6 +31,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+
 # ================== SOZLAMALAR ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Token: BOT_TOKEN muhit o'zgaruvchisidan olinadi. Bo'lmasa, quyidagi qatorga YANGI tokenni yozing.
